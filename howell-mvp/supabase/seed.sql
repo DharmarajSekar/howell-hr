@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════════════
---  HOWELL HR — Demo Seed Data
+--  HOWELL HR — Demo Seed Data (Full MVP with all 10 stages)
 --  Run AFTER schema.sql in Supabase SQL Editor
 -- ═══════════════════════════════════════════════════════════════
 
@@ -100,41 +100,9 @@ INSERT INTO interviews (application_id, scheduled_at, duration_minutes, intervie
 
 -- ── Notifications ────────────────────────────────────────────
 INSERT INTO notifications (recipient_name, recipient_email, recipient_phone, channel, subject, message, status, sent_at) VALUES
-('Rohit Sharma','rohit.sharma@email.com','+91 98123 45678','whatsapp',NULL,'Hi Rohit,
-
-Congratulations! You''ve been shortlisted for the *Senior Site Engineer* position at Howell.
-
-Your interview is scheduled for 24th April 2026 at 10:00 AM via Google Meet.
-
-Join here: https://meet.google.com/abc-defg-hij
-
-Please confirm your attendance.
-
-Best regards,
-Howell HR Team','sent','2026-04-20 10:10:00+00'),
-('Amit Singh','amit.singh@email.com','+91 97654 32109','email','Interview Confirmation — HR Business Partner | Howell','Hi Amit,
-
-Thank you for your time today. We were very impressed with your background and would like to move forward.
-
-Please expect your offer letter within 2 business days.
-
-Best regards,
-Howell HR Team','sent','2026-04-21 12:00:00+00'),
-('Neha Gupta','neha.gupta@email.com','+91 92109 87654','email','Offer Letter — Senior Site Engineer | Howell','Hi Neha,
-
-We are thrilled to extend an offer for the Senior Site Engineer position at Howell!
-
-Offer details:
-• Role: Senior Site Engineer
-• CTC: ₹18 LPA
-• Start Date: 5th May 2026
-
-Please review and accept your offer letter in the HR portal.
-
-Welcome to the Howell family!
-
-Best regards,
-Howell HR Team','sent','2026-04-21 14:05:00+00');
+('Rohit Sharma','rohit.sharma@email.com','+91 98123 45678','whatsapp',NULL,'Hi Rohit, Congratulations! You have been shortlisted for the Senior Site Engineer position at Howell. Your interview is scheduled for 24th April 2026 at 10:00 AM via Google Meet. Join here: https://meet.google.com/abc-defg-hij. Please confirm your attendance. Best regards, Howell HR Team','sent','2026-04-20 10:10:00+00'),
+('Amit Singh','amit.singh@email.com','+91 97654 32109','email','Interview Confirmation — HR Business Partner | Howell','Hi Amit, Thank you for your time today. We were very impressed with your background and would like to move forward. Please expect your offer letter within 2 business days. Best regards, Howell HR Team','sent','2026-04-21 12:00:00+00'),
+('Neha Gupta','neha.gupta@email.com','+91 92109 87654','email','Offer Letter — Senior Site Engineer | Howell','Hi Neha, We are thrilled to extend an offer for the Senior Site Engineer position at Howell! Role: Senior Site Engineer | CTC: INR 18 LPA | Start Date: 5th May 2026. Please review and accept your offer letter in the HR portal. Welcome to the Howell family! Best regards, Howell HR Team','sent','2026-04-21 14:05:00+00');
 
 -- ── Onboarding ───────────────────────────────────────────────
 INSERT INTO onboarding_records (id, candidate_id, job_id, candidate_name, job_title, joining_date, status) VALUES
@@ -144,18 +112,56 @@ INSERT INTO onboarding_tasks (record_id, category, title, completed, sort_order)
 ('d1000001-0000-0000-0000-000000000001','Documents','Submit signed offer letter',TRUE,0),
 ('d1000001-0000-0000-0000-000000000001','Documents','Submit educational certificates',TRUE,1),
 ('d1000001-0000-0000-0000-000000000001','Documents','Submit previous employment letters',FALSE,2),
-('d1000001-0000-0000-0000-000000000001','Documents','Submit PAN card & Aadhaar copy',TRUE,3),
+('d1000001-0000-0000-0000-000000000001','Documents','Submit PAN card and Aadhaar copy',TRUE,3),
 ('d1000001-0000-0000-0000-000000000001','Documents','Submit 3-month bank statement',FALSE,4),
 ('d1000001-0000-0000-0000-000000000001','IT Setup','Laptop provisioned',TRUE,5),
 ('d1000001-0000-0000-0000-000000000001','IT Setup','Corporate email account created',FALSE,6),
 ('d1000001-0000-0000-0000-000000000001','IT Setup','Access to HR systems granted',FALSE,7),
 ('d1000001-0000-0000-0000-000000000001','Induction','Orientation session scheduled',FALSE,8),
 ('d1000001-0000-0000-0000-000000000001','Induction','Meet the team — intro call',FALSE,9),
-('d1000001-0000-0000-0000-000000000001','Induction','Company handbook & policies shared',TRUE,10),
+('d1000001-0000-0000-0000-000000000001','Induction','Company handbook and policies shared',TRUE,10),
 ('d1000001-0000-0000-0000-000000000001','Day 1 Kit','Welcome kit dispatched',TRUE,11),
 ('d1000001-0000-0000-0000-000000000001','Day 1 Kit','Buddy assigned',FALSE,12);
 
--- ── Demo User (run this LAST) ────────────────────────────────
--- NOTE: Create this user in Supabase Dashboard → Authentication → Users
--- Email: demo@howell.com | Password: demo1234
--- This SQL just confirms the data. The user must be created via the Dashboard.
+-- ── Sourcing Campaigns (Stage 1 demo data) ───────────────────
+INSERT INTO sourcing_campaigns (id, job_id, job_title, platforms, status, total_reached, responses, interested, ai_summary) VALUES
+('e1000001-0000-0000-0000-000000000001','a1b2c3d4-0001-0001-0001-000000000001','Senior Site Engineer',ARRAY['LinkedIn','Naukri','Indeed'],'active',24,14,6,'AI sourced 24 matching profiles across LinkedIn, Naukri, and Indeed. 6 candidates expressed strong interest. Top profiles from Siemens and Honeywell identified.'),
+('e1000001-0000-0000-0000-000000000002','a1b2c3d4-0002-0002-0002-000000000002','HR Business Partner',ARRAY['LinkedIn','Referral'],'active',18,10,4,'AI sourced 18 HR professionals matching the HRBP requirements. 4 candidates from large MNCs are interested and have responded positively.');
+
+INSERT INTO sourced_candidates (campaign_id, full_name, current_title, current_company, experience_years, location, platform, match_score, status) VALUES
+('e1000001-0000-0000-0000-000000000001','Vikram Rajan','Senior ELV Engineer','ABB',6,'Mumbai','LinkedIn',86,'interested'),
+('e1000001-0000-0000-0000-000000000001','Divya Menon','Site Engineer','Schneider Electric',5,'Pune','Naukri',78,'responded'),
+('e1000001-0000-0000-0000-000000000001','Suresh Kumar','ELV Project Lead','Bosch',7,'Mumbai','LinkedIn',82,'interested'),
+('e1000001-0000-0000-0000-000000000001','Ananya Patel','MEP Engineer','Larsen & Toubro',5,'Mumbai','Indeed',72,'reached_out'),
+('e1000001-0000-0000-0000-000000000001','Rahul Verma','Commissioning Engineer','GE',6,'Hyderabad','Naukri',75,'in_process'),
+('e1000001-0000-0000-0000-000000000002','Pooja Iyer','HR Business Partner','Infosys',7,'Bengaluru','LinkedIn',88,'interested'),
+('e1000001-0000-0000-0000-000000000002','Sanjay Reddy','Senior HRBP','IBM',8,'Bengaluru','LinkedIn',84,'interested'),
+('e1000001-0000-0000-0000-000000000002','Lakshmi Nair','HR Manager','Deloitte',6,'Bengaluru','Referral',79,'responded');
+
+-- ── Pre-Screen Sessions (Stage 4 demo data) ──────────────────
+INSERT INTO pre_screen_sessions (id, application_id, candidate_name, job_title, status, overall_score, ai_recommendation, completed_at) VALUES
+('f1000001-0000-0000-0000-000000000001','c1000001-0000-0000-0000-000000000001','Rohit Sharma','Senior Site Engineer','completed',82,'Strong Hire','2026-04-20 11:30:00+00'),
+('f1000001-0000-0000-0000-000000000002','c1000001-0000-0000-0000-000000000008','Ravi Kumar','Data Analyst — HR Analytics','completed',74,'Consider','2026-04-21 14:00:00+00');
+
+INSERT INTO pre_screen_responses (session_id, question, answer, score, ai_feedback, sort_order) VALUES
+('f1000001-0000-0000-0000-000000000001','Can you briefly walk me through your technical background and the technologies you are most comfortable with?','I have 7 years of experience in ELV systems at Siemens. I specialize in CCTV, access control, BMS, and structured cabling. I have worked on 15+ projects ranging from commercial buildings to data centres.',88,'Strong, detailed response demonstrating clear domain expertise and relevant project experience.',0),
+('f1000001-0000-0000-0000-000000000001','Describe a challenging technical problem you solved recently. What was your approach?','At my last project, we had a BMS integration issue where the third-party system was not responding. I diagnosed the communication protocol mismatch and rewrote the integration points. Resolved within 2 days saving the project from a 2-week delay.',85,'Excellent structured response with clear problem, action, and outcome. Shows strong technical troubleshooting.',1),
+('f1000001-0000-0000-0000-000000000001','Tell me about your experience working in agile/scrum teams.','I have worked in weekly sprint cycles at Siemens. We used MS Project for tracking and had daily standups. I managed a team of 4 junior engineers.',78,'Good answer. Could have provided more specifics on scrum ceremonies and tools.',2);
+
+-- ── Hiring Decisions (Stage 6 demo data) ─────────────────────
+INSERT INTO hiring_decisions (application_id, candidate_name, job_title, ai_recommendation, ai_score, resume_score, interview_score, decision, decision_notes, decided_by, decided_at) VALUES
+('c1000001-0000-0000-0000-000000000006','Amit Singh','HR Business Partner','Strong Hire',94,94,95,'hire','Exceptional candidate. Strong Workday expertise, deep HRBP experience, and excellent cultural fit. Recommend immediate onboarding.','Dharmaraj Sekar','2026-04-21 15:00:00+00'),
+('c1000001-0000-0000-0000-000000000007','Neha Gupta','Senior Site Engineer','Strong Hire',91,91,NULL,'hire','Outstanding profile. 8 years at Honeywell with PMP. Salary expectations within range. Offer letter issued.','Dharmaraj Sekar','2026-04-21 16:00:00+00');
+
+-- ── BGV Records (Stage 8 demo data) ──────────────────────────
+INSERT INTO bgv_records (id, candidate_id, application_id, candidate_name, job_title, status, identity_check, education_check, employment_check, address_check, criminal_check, fraud_flag) VALUES
+('g1000001-0000-0000-0000-000000000001','b1000001-0000-0000-0000-000000000006','c1000001-0000-0000-0000-000000000006','Amit Singh','HR Business Partner','completed','verified','verified','verified','verified','verified',FALSE),
+('g1000001-0000-0000-0000-000000000002','b1000001-0000-0000-0000-000000000007','c1000001-0000-0000-0000-000000000007','Neha Gupta','Senior Site Engineer','in_progress','verified','verified','in_review','pending','pending',FALSE);
+
+INSERT INTO bgv_documents (bgv_record_id, document_type, file_name, status, verified) VALUES
+('g1000001-0000-0000-0000-000000000001','Aadhaar Card','aadhaar_card_amit_singh.pdf','uploaded',TRUE),
+('g1000001-0000-0000-0000-000000000001','PAN Card','pan_card_amit_singh.pdf','uploaded',TRUE),
+('g1000001-0000-0000-0000-000000000001','Degree Certificate','degree_certificate_amit_singh.pdf','uploaded',TRUE),
+('g1000001-0000-0000-0000-000000000001','Relieving Letter','relieving_letter_wipro.pdf','uploaded',TRUE),
+('g1000001-0000-0000-0000-000000000002','Aadhaar Card','aadhaar_card_neha_gupta.pdf','uploaded',TRUE),
+('g1000001-0000-0000-0000-000000000002','PAN Card','pan_card_neha_gupta.pdf','uploaded',FALSE);

@@ -3,16 +3,21 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import {
-  LayoutDashboard, Briefcase, Users, Calendar, Bell, LogOut, ChevronRight, UserCheck
+  LayoutDashboard, Briefcase, Users, Calendar, Bell, LogOut, ChevronRight,
+  UserCheck, Globe, Bot, BarChart2, ShieldCheck
 } from 'lucide-react'
 
 const NAV = [
-  { href: '/dashboard',      label: 'Dashboard',      icon: LayoutDashboard },
-  { href: '/jobs',           label: 'Job Postings',   icon: Briefcase },
-  { href: '/candidates',     label: 'Candidates',     icon: Users },
-  { href: '/interviews',     label: 'Interviews',     icon: Calendar },
-  { href: '/onboarding',     label: 'Onboarding',     icon: UserCheck },
-  { href: '/notifications',  label: 'Notifications',  icon: Bell },
+  { href: '/dashboard',        label: 'Dashboard',       icon: LayoutDashboard },
+  { href: '/sourcing',         label: 'AI Sourcing',     icon: Globe,       badge: 'NEW' },
+  { href: '/jobs',             label: 'Job Postings',    icon: Briefcase },
+  { href: '/candidates',       label: 'Candidates',      icon: Users },
+  { href: '/pre-screen',       label: 'Pre-Screen Bot',  icon: Bot,         badge: 'NEW' },
+  { href: '/interviews',       label: 'Interviews',      icon: Calendar },
+  { href: '/hiring-decisions', label: 'Hire / Hold',     icon: BarChart2,   badge: 'NEW' },
+  { href: '/onboarding',       label: 'Onboarding',      icon: UserCheck },
+  { href: '/bgv',              label: 'BGV & Docs',      icon: ShieldCheck, badge: 'NEW' },
+  { href: '/notifications',    label: 'Notifications',   icon: Bell },
 ]
 
 export default function Sidebar() {
@@ -34,13 +39,13 @@ export default function Sidebar() {
           </div>
           <div>
             <div className="font-bold text-sm leading-none">HOWELL</div>
-            <div className="text-gray-400 text-xs mt-0.5">HR Platform</div>
+            <div className="text-gray-400 text-xs mt-0.5">AI-Enabled HR Platform</div>
           </div>
         </div>
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 px-3 py-4 space-y-1">
+      <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
         {NAV.map(item => {
           const active = pathname === item.href || pathname.startsWith(item.href + '/')
           return (
@@ -54,8 +59,13 @@ export default function Sidebar() {
                   : 'text-gray-300 hover:bg-gray-800 hover:text-white'
               )}
             >
-              <item.icon size={18} />
+              <item.icon size={17} />
               <span className="flex-1">{item.label}</span>
+              {(item as any).badge && !active && (
+                <span className="text-xs bg-red-700/80 text-red-200 px-1.5 py-0.5 rounded font-medium">
+                  {(item as any).badge}
+                </span>
+              )}
               {active && <ChevronRight size={14} className="opacity-60" />}
             </Link>
           )
@@ -65,7 +75,7 @@ export default function Sidebar() {
       {/* User */}
       <div className="px-3 py-4 border-t border-gray-800">
         <div className="flex items-center gap-3 px-3 py-2 mb-2">
-          <div className="w-8 h-8 rounded-full bg-red-700 flex items-center justify-center text-sm font-bold">
+          <div className="w-8 h-8 rounded-full bg-red-700 flex items-center justify-center text-sm font-bold flex-shrink-0">
             D
           </div>
           <div className="flex-1 min-w-0">

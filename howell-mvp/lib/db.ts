@@ -164,6 +164,154 @@ export const db = {
     },
   },
 
+  // ─── STAGE 1: AI Talent Sourcing ─────────────────────────────
+  sourcing: {
+    allCampaigns: async () => {
+      const { data } = await svc()
+        .from('sourcing_campaigns')
+        .select('*, sourced_candidates(*)')
+        .order('created_at', { ascending: false })
+      return data || []
+    },
+    findCampaign: async (id: string) => {
+      const { data } = await svc()
+        .from('sourcing_campaigns')
+        .select('*, sourced_candidates(*)')
+        .eq('id', id)
+        .single()
+      return data
+    },
+    createCampaign: async (data: any) => {
+      const { data: campaign } = await svc().from('sourcing_campaigns').insert(data).select().single()
+      return campaign
+    },
+    updateCampaign: async (id: string, data: any) => {
+      const { data: campaign } = await svc()
+        .from('sourcing_campaigns')
+        .update({ ...data, updated_at: new Date().toISOString() })
+        .eq('id', id).select().single()
+      return campaign
+    },
+    addSourcedCandidate: async (data: any) => {
+      const { data: sc } = await svc().from('sourced_candidates').insert(data).select().single()
+      return sc
+    },
+    updateSourcedCandidate: async (id: string, data: any) => {
+      const { data: sc } = await svc().from('sourced_candidates').update(data).eq('id', id).select().single()
+      return sc
+    },
+  },
+
+  // ─── STAGE 4: Pre-Screen Bot ──────────────────────────────────
+  preScreen: {
+    allSessions: async () => {
+      const { data } = await svc()
+        .from('pre_screen_sessions')
+        .select('*, responses:pre_screen_responses(*)')
+        .order('created_at', { ascending: false })
+      return (data || []).map((s: any) => ({
+        ...s,
+        responses: (s.responses || []).sort((a: any, b: any) => a.sort_order - b.sort_order),
+      }))
+    },
+    findSession: async (id: string) => {
+      const { data } = await svc()
+        .from('pre_screen_sessions')
+        .select('*, responses:pre_screen_responses(*)')
+        .eq('id', id)
+        .single()
+      if (!data) return null
+      return { ...data, responses: (data.responses || []).sort((a: any, b: any) => a.sort_order - b.sort_order) }
+    },
+    createSession: async (data: any) => {
+      const { data: session } = await svc().from('pre_screen_sessions').insert(data).select().single()
+      return session
+    },
+    updateSession: async (id: string, data: any) => {
+      const { data: session } = await svc().from('pre_screen_sessions').update(data).eq('id', id).select().single()
+      return session
+    },
+    saveResponses: async (sessionId: string, responses: any[]) => {
+      await svc().from('pre_screen_responses').delete().eq('session_id', sessionId)
+      if (responses.length) {
+        await svc().from('pre_screen_responses').insert(
+          responses.map((r, i) => ({ ...r, session_id: sessionId, sort_order: i }))
+        )
+      }
+      return db.preScreen.findSession(sessionId)
+    },
+  },
+
+  // ─── STAGE 6: Hiring Decisions ────────────────────────────────
+  hiringDecisions: {
+    all: async () => {
+      const { data } = await svc()
+        .from('hiring_decisions')
+        .select('*, application:applications(*, candidate:candidates(*), job:jobs(*))')
+        .order('created_at', { ascending: false })
+      return data || []
+    },
+    find: async (id: string) => {
+      const { data } = await svc()
+        .from('hiring_decisions')
+        .select('*, application:applications(*, candidate:candidates(*), job:jobs(*))')
+        .eq('id', id)
+        .single()
+      return data
+    },
+    findByApplication: async (appId: string) => {
+      const { data } = await svc()
+        .from('hiring_decisions')
+        .select('*')
+        .eq('application_id', appId)
+        .single()
+      return data
+    },
+    create: async (data: any) => {
+      const { data: hd } = await svc().from('hiring_decisions').insert(data).select().single()
+      return hd
+    },
+    update: async (id: string, data: any) => {
+      const { data: hd } = await svc().from('hiring_decisions').update(data).eq('id', id).select().single()
+      return hd
+    },
+  },
+
+  // ─── STAGE 8: BGV & Documentation ────────────────────────────
+  bgv: {
+    all: async () => {
+      const { data } = await svc()
+        .from('bgv_records')
+        .select('*, documents:bgv_documents(*)')
+        .order('created_at', { ascending: false })
+      return data || []
+    },
+    find: async (id: string) => {
+      const { data } = await svc()
+        .from('bgv_records')
+        .select('*, documents:bgv_documents(*)')
+        .eq('id', id)
+        .single()
+      return data
+    },
+    create: async (data: any) => {
+      const { data: record } = await svc().from('bgv_records').insert(data).select().single()
+      return record
+    },
+    update: async (id: string, data: any) => {
+      const { data: record } = await svc().from('bgv_records').update(data).eq('id', id).select().single()
+      return record
+    },
+    addDocument: async (data: any) => {
+      const { data: doc } = await svc().from('bgv_documents').insert(data).select().single()
+      return doc
+    },
+    updateDocument: async (id: string, data: any) => {
+      const { data: doc } = await svc().from('bgv_documents').update(data).eq('id', id).select().single()
+      return doc
+    },
+  },
+
   metrics: async () => {
     const supabase = svc()
     const [jobsRes, candidatesRes, appsRes] = await Promise.all([
