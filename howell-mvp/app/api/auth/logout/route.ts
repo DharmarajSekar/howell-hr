@@ -1,9 +1,8 @@
 export const dynamic = 'force-dynamic'
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
 
 export async function POST() {
-  const supabase = createClient()
-  await supabase.auth.signOut()
-  return NextResponse.json({ ok: true })
+  const res = NextResponse.json({ ok: true })
+  res.cookies.set('howell-session', '', { maxAge: 0, path: '/' })
+  return res
 }
