@@ -4,9 +4,35 @@ import { useRouter } from 'next/navigation'
 import { Sparkles, Loader2, ArrowLeft } from 'lucide-react'
 import Link from 'next/link'
 
-const DEPARTMENTS = ['Engineering', 'HR', 'Analytics', 'Operations', 'Finance', 'Technology']
-const LOCATIONS   = ['Mumbai', 'Delhi', 'Bengaluru', 'Pune', 'Hyderabad', 'Chennai', 'Multiple Locations']
-const EMP_TYPES   = ['Full-time', 'Contract', 'Part-time']
+const DEPARTMENTS = ['Engineering', 'HR', 'Analytics', 'Operations', 'Finance', 'Technology', 'Sales', 'Marketing', 'Legal', 'Product', 'Design', 'Customer Success']
+
+const LOCATIONS = [
+  '── India ──',
+  'Mumbai', 'Delhi', 'Bengaluru', 'Pune', 'Hyderabad', 'Chennai',
+  'Kolkata', 'Ahmedabad', 'Jaipur', 'Noida', 'Gurugram', 'Kochi',
+  '── Middle East ──',
+  'Dubai, UAE', 'Abu Dhabi, UAE', 'Sharjah, UAE', 'Riyadh, Saudi Arabia',
+  'Jeddah, Saudi Arabia', 'Doha, Qatar', 'Kuwait City, Kuwait',
+  'Muscat, Oman', 'Manama, Bahrain',
+  '── Asia Pacific ──',
+  'Singapore', 'Kuala Lumpur, Malaysia', 'Bangkok, Thailand',
+  'Jakarta, Indonesia', 'Manila, Philippines', 'Ho Chi Minh City, Vietnam',
+  'Sydney, Australia', 'Melbourne, Australia', 'Tokyo, Japan',
+  'Shanghai, China', 'Hong Kong', 'Seoul, South Korea',
+  '── Europe ──',
+  'London, UK', 'Manchester, UK', 'Dublin, Ireland',
+  'Amsterdam, Netherlands', 'Berlin, Germany', 'Frankfurt, Germany',
+  'Paris, France', 'Madrid, Spain', 'Milan, Italy',
+  'Zurich, Switzerland', 'Stockholm, Sweden', 'Warsaw, Poland',
+  '── North America ──',
+  'New York, USA', 'San Francisco, USA', 'Austin, USA', 'Chicago, USA',
+  'Seattle, USA', 'Boston, USA', 'Los Angeles, USA', 'Toronto, Canada',
+  'Vancouver, Canada',
+  '── Other ──',
+  'Remote', 'Multiple Locations', 'Pan India',
+]
+
+const EMP_TYPES = ['Full-time', 'Contract', 'Part-time', 'Freelance', 'Internship']
 
 export default function NewJobPage() {
   const router = useRouter()
@@ -98,7 +124,10 @@ export default function NewJobPage() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Location</label>
               <select value={form.location} onChange={e => set('location', e.target.value)}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500">
-                {LOCATIONS.map(l => <option key={l}>{l}</option>)}
+                {LOCATIONS.map(l => l.startsWith('──')
+                  ? <option key={l} disabled style={{ color: '#9ca3af', fontWeight: 600 }}>{l}</option>
+                  : <option key={l}>{l}</option>
+                )}
               </select>
             </div>
             <div>
