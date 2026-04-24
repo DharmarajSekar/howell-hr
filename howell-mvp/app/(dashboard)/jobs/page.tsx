@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic'
 import Link from 'next/link'
 import { db } from '@/lib/db'
 import { formatDate, JOB_STATUS_COLORS } from '@/lib/utils'
