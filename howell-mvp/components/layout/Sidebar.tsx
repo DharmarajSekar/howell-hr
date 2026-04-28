@@ -8,7 +8,7 @@ import {
   UserCheck, Globe, Bot, BarChart2, ShieldCheck, ChevronDown,
   ChevronRight, Database, MessageSquare, Gift, Star, ClipboardList,
   TrendingDown, DoorOpen, Package, BookOpen, Home, AlertCircle,
-  UserCog, Activity
+  UserCog, Activity, Link2
 } from 'lucide-react'
 
 const SECTIONS = [
@@ -61,6 +61,12 @@ const SECTIONS = [
     items: [
       { href: '/communications', label: 'Messages',      icon: MessageSquare },
       { href: '/notifications',  label: 'Notifications', icon: Bell },
+    ]
+  },
+  {
+    label: 'Settings',
+    items: [
+      { href: '/integrations', label: 'Portal Integrations', icon: Link2, badge: '' },
     ]
   },
 ]
