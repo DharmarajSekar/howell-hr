@@ -56,6 +56,8 @@ export default function SourcingPage() {
   const [profileSource, setProfileSource]     = useState<'mock'|'live'|null>(null)
   const [selectedProfile, setSelectedProfile] = useState<Profile | null>(null)
   const [synced, setSynced]                   = useState<Record<string, 'syncing'|'done'|'error'>>({})
+  const [bulkSaveStatus, setBulkSaveStatus]   = useState<{saved:number;total:number;done:boolean}|null>(null)
+  const [shortlisted, setShortlisted]         = useState<Set<string>>(new Set())
 
   // Market tab
   const [marketQuery, setMarketQuery]         = useState('')
@@ -104,12 +106,38 @@ export default function SourcingPage() {
   async function fetchProfiles() {
     setLoadingProfiles(true)
     setSelectedProfile(null)
+    setBulkSaveStatus(null)
     try {
       const q = searchQuery || selectedJob?.title || 'engineer'
       const res = await fetch(`/api/portals/jsearch?query=${encodeURIComponent(q)}&location=${encodeURIComponent(searchLocation)}`)
       const data = await res.json()
-      setProfiles(data.profiles || [])
+      const fetchedProfiles: Profile[] = data.profiles || []
+      setProfiles(fetchedProfiles)
       setProfileSource(data.source)
+
+      // ── AUTO-SAVE ALL FETCHED PROFILES TO SUPABASE IMMEDIATELY ──
+      if (fetchedProfiles.length > 0) {
+        setBulkSaveStatus({ saved: 0, total: fetchedProfiles.length, done: false })
+        try {
+          const syncRes = await fetch('/api/portals/bulk-sync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              profiles: fetchedProfiles,
+              jobId: selectedJob?.id || null,
+            }),
+          })
+          const syncData = await syncRes.json()
+          setBulkSaveStatus({ saved: syncData.saved || 0, total: fetchedProfiles.length, done: true })
+
+          // Mark all as auto-synced
+          const autoSynced: Record<string, 'done'> = {}
+          fetchedProfiles.forEach(p => { autoSynced[p.id] = 'done' })
+          setSynced(prev => ({ ...prev, ...autoSynced }))
+        } catch {
+          setBulkSaveStatus({ saved: 0, total: fetchedProfiles.length, done: true })
+        }
+      }
     } catch {
       setProfiles([])
     } finally {
@@ -329,6 +357,15 @@ export default function SourcingPage() {
                 {profileSource==='live' ? '✓ Live profiles from JSearch API (LinkedIn + Indeed + Glassdoor)' : '⚡ Demo profiles — add RAPIDAPI_KEY to Vercel for live data'}
               </div>
             )}
+            {/* Auto-save status banner */}
+            {bulkSaveStatus && (
+              <div className={`mt-3 flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium ${bulkSaveStatus.done ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-blue-50 border border-blue-100 text-blue-700'}`}>
+                {bulkSaveStatus.done
+                  ? <><CheckCircle size={13}/> {bulkSaveStatus.saved} of {bulkSaveStatus.total} profiles auto-saved to HRMS database. View them at <strong className="underline cursor-pointer" onClick={()=>window.location.href='/candidates'}>/candidates</strong> or <strong className="underline cursor-pointer" onClick={()=>window.location.href='/talent-pool'}>/talent-pool</strong></>
+                  : <><RefreshCw size={13} className="animate-spin"/> Auto-saving {bulkSaveStatus.total} profiles to HRMS database…</>
+                }
+              </div>
+            )}
           </div>
 
           {profiles.length > 0 && (
@@ -408,24 +445,26 @@ export default function SourcingPage() {
                         </div>
                       </div>
 
-                      {synced[selectedProfile.id] === 'done' ? (
-                        <div className="bg-green-50 border border-green-200 rounded-xl p-4 flex items-center gap-3">
-                          <CheckCircle size={18} className="text-green-500 flex-shrink-0"/>
-                          <div>
-                            <div className="text-sm font-bold text-green-700">Synced to HRMS ✓</div>
-                            <p className="text-xs text-green-600">Profile saved to Candidates DB. Application created under "{selectedJob?.title}" with {selectedProfile.matchScore}% match score. View in <strong>/candidates</strong>.</p>
-                          </div>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => syncToHRMS(selectedProfile)}
-                          disabled={synced[selectedProfile.id] === 'syncing'}
-                          className="w-full flex items-center justify-center gap-2 bg-red-700 hover:bg-red-800 text-white py-3 rounded-xl text-sm font-bold transition disabled:opacity-60">
-                          {synced[selectedProfile.id] === 'syncing'
-                            ? <><RefreshCw size={15} className="animate-spin"/> Syncing to HRMS…</>
-                            : <><Database size={15}/> Shortlist & Sync to HRMS</>}
-                        </button>
-                      )}
+                      {/* Profile is always auto-saved — this button promotes to shortlisted */}
+                      <div className="bg-green-50 border border-green-200 rounded-xl p-3 flex items-center gap-2.5 mb-2">
+                        <CheckCircle size={14} className="text-green-500 flex-shrink-0"/>
+                        <p className="text-xs text-green-700">
+                          <strong>Auto-saved to HRMS DB ✓</strong> — Profile is in your Candidates database.
+                          {selectedJob && ` Application created under "${selectedJob.title}".`}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setShortlisted(prev => { const n = new Set(prev); n.add(selectedProfile.id); return n })
+                          syncToHRMS(selectedProfile)
+                        }}
+                        disabled={shortlisted.has(selectedProfile.id)}
+                        className={`w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold transition ${shortlisted.has(selectedProfile.id) ? 'bg-green-600 text-white cursor-default' : 'bg-red-700 hover:bg-red-800 text-white'}`}>
+                        {shortlisted.has(selectedProfile.id)
+                          ? <><CheckCircle size={15}/> Shortlisted ✓</>
+                          : <><Zap size={15}/> Move to Shortlisted</>
+                        }
+                      </button>
                     </div>
                   </div>
                 ) : (
