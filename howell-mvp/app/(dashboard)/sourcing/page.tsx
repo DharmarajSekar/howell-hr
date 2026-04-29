@@ -56,7 +56,7 @@ export default function SourcingPage() {
   const [profileSource, setProfileSource]     = useState<'mock'|'live'|null>(null)
   const [selectedProfile, setSelectedProfile] = useState<Profile | null>(null)
   const [synced, setSynced]                   = useState<Record<string, 'syncing'|'done'|'error'>>({})
-  const [bulkSaveStatus, setBulkSaveStatus]   = useState<{saved:number;total:number;done:boolean}|null>(null)
+  const [bulkSaveStatus, setBulkSaveStatus]   = useState<{saved:number;failed:number;total:number;done:boolean;errors?:string[]}|null>(null)
   const [shortlisted, setShortlisted]         = useState<Set<string>>(new Set())
 
   // Market tab
@@ -128,14 +128,20 @@ export default function SourcingPage() {
             }),
           })
           const syncData = await syncRes.json()
-          setBulkSaveStatus({ saved: syncData.saved || 0, total: fetchedProfiles.length, done: true })
+          setBulkSaveStatus({
+            saved:  syncData.saved  || 0,
+            failed: syncData.failed || 0,
+            total:  fetchedProfiles.length,
+            done:   true,
+            errors: syncData.errors,
+          })
 
           // Mark all as auto-synced
           const autoSynced: Record<string, 'done'> = {}
           fetchedProfiles.forEach(p => { autoSynced[p.id] = 'done' })
           setSynced(prev => ({ ...prev, ...autoSynced }))
-        } catch {
-          setBulkSaveStatus({ saved: 0, total: fetchedProfiles.length, done: true })
+        } catch (e: any) {
+          setBulkSaveStatus({ saved: 0, failed: fetchedProfiles.length, total: fetchedProfiles.length, done: true, errors: [e?.message || 'Network error calling bulk-sync'] })
         }
       }
     } catch {
@@ -359,10 +365,27 @@ export default function SourcingPage() {
             )}
             {/* Auto-save status banner */}
             {bulkSaveStatus && (
-              <div className={`mt-3 flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium ${bulkSaveStatus.done ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-blue-50 border border-blue-100 text-blue-700'}`}>
-                {bulkSaveStatus.done
-                  ? <><CheckCircle size={13}/> {bulkSaveStatus.saved} of {bulkSaveStatus.total} profiles auto-saved to HRMS database. View them at <strong className="underline cursor-pointer" onClick={()=>window.location.href='/candidates'}>/candidates</strong> or <strong className="underline cursor-pointer" onClick={()=>window.location.href='/talent-pool'}>/talent-pool</strong></>
-                  : <><RefreshCw size={13} className="animate-spin"/> Auto-saving {bulkSaveStatus.total} profiles to HRMS database…</>
+              <div className={`mt-3 px-3 py-2 rounded-lg text-xs font-medium ${
+                bulkSaveStatus.done && bulkSaveStatus.saved > 0 ? 'bg-green-50 border border-green-200 text-green-700' :
+                bulkSaveStatus.done && bulkSaveStatus.failed > 0 ? 'bg-red-50 border border-red-200 text-red-700' :
+                'bg-blue-50 border border-blue-100 text-blue-700'}`}>
+                {!bulkSaveStatus.done
+                  ? <div className="flex items-center gap-2"><RefreshCw size={13} className="animate-spin"/> Auto-saving {bulkSaveStatus.total} profiles to HRMS database…</div>
+                  : bulkSaveStatus.saved > 0
+                    ? <div className="flex items-center gap-2">
+                        <CheckCircle size={13}/>
+                        <span>{bulkSaveStatus.saved} of {bulkSaveStatus.total} profiles saved to HRMS database.</span>
+                        <strong className="underline cursor-pointer" onClick={()=>window.location.href='/talent-pool'}>View in Talent Pool →</strong>
+                      </div>
+                    : <div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <AlertTriangle size={13}/>
+                          <span>Save failed — {bulkSaveStatus.failed} of {bulkSaveStatus.total} errors.</span>
+                        </div>
+                        {bulkSaveStatus.errors && bulkSaveStatus.errors.length > 0 && (
+                          <div className="mt-1 text-xs font-normal opacity-80">{bulkSaveStatus.errors.slice(0,3).join(' · ')}</div>
+                        )}
+                      </div>
                 }
               </div>
             )}
