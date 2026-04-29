@@ -2,12 +2,27 @@
 import { useState, useMemo } from 'react'
 import { Search, Filter, Star, MapPin, Briefcase, Phone, Mail, Users, Database, TrendingUp, UserPlus, Zap } from 'lucide-react'
 
-const SOURCE_COLORS: Record<string,string> = {
-  linkedin:   'bg-blue-100 text-blue-700',
-  naukri:     'bg-orange-100 text-orange-700',
-  referral:   'bg-green-100 text-green-700',
-  apply_link: 'bg-purple-100 text-purple-700',
-  direct:     'bg-gray-100 text-gray-600',
+function sourceColor(source: string): string {
+  if (!source) return 'bg-gray-100 text-gray-600'
+  const s = source.toLowerCase()
+  if (s.includes('linkedin'))   return 'bg-blue-100 text-blue-700'
+  if (s.includes('naukri'))     return 'bg-orange-100 text-orange-700'
+  if (s.includes('referral'))   return 'bg-green-100 text-green-700'
+  if (s.includes('apply_link') || s.includes('direct')) return 'bg-purple-100 text-purple-700'
+  if (s.includes('portal_sync') || s.includes('portal')) return 'bg-teal-100 text-teal-700'
+  if (s.includes('indeed'))     return 'bg-indigo-100 text-indigo-700'
+  if (s.includes('jsearch'))    return 'bg-green-100 text-green-700'
+  return 'bg-gray-100 text-gray-600'
+}
+
+function sourceLabel(source: string): string {
+  if (!source) return 'Unknown'
+  const s = source.toLowerCase()
+  if (s === 'portal_sync_linkedin')  return 'LinkedIn'
+  if (s === 'portal_sync_indeed')    return 'Indeed'
+  if (s.startsWith('portal_sync_'))  return '🔗 ' + source.replace('portal_sync_','').replace(/_/g,' ')
+  if (s.includes('portal sync'))     return '🔗 Portal'
+  return source
 }
 
 interface Props { candidates: any[]; applications: any[]; jobs: any[] }
@@ -34,7 +49,15 @@ export default function TalentPoolClient({ candidates, applications, jobs }: Pro
       c.current_title?.toLowerCase().includes(q) ||
       c.current_company?.toLowerCase().includes(q) ||
       (c.skills || []).some((s: string) => s.toLowerCase().includes(q))
-    const matchSource = source === 'all' || c.source === source
+    const src = (c.source || '').toLowerCase()
+    const matchSource =
+      source === 'all' ? true :
+      source === 'portal' ? src.includes('portal_sync') || src.includes('portal sync') :
+      source === 'linkedin' ? src.includes('linkedin') :
+      source === 'naukri' ? src.includes('naukri') :
+      source === 'referral' ? src.includes('referral') :
+      source === 'apply_link' ? src.includes('apply_link') || src.includes('direct') :
+      c.source === source
     return matchSearch && matchSource
   }), [candidates, search, source])
 
@@ -68,10 +91,10 @@ export default function TalentPoolClient({ candidates, applications, jobs }: Pro
       {/* Stats */}
       <div className="grid grid-cols-4 gap-4 mb-6">
         {[
-          { label: 'Total Profiles',  value: candidates.length,                                        icon: Database,    color: 'text-gray-700 bg-white' },
-          { label: 'LinkedIn',        value: candidates.filter((c:any)=>c.source==='linkedin').length,  icon: Users,       color: 'text-blue-700 bg-blue-50' },
-          { label: 'Referrals',       value: candidates.filter((c:any)=>c.source==='referral').length,  icon: UserPlus,    color: 'text-green-700 bg-green-50' },
-          { label: 'Avg Experience',  value: candidates.length ? Math.round(candidates.reduce((s:number,c:any)=>s+(c.experience_years||0),0)/candidates.length)+'y' : '—', icon: TrendingUp, color: 'text-purple-700 bg-purple-50' },
+          { label: 'Total Profiles',   value: candidates.length,                                                                                                          icon: Database,    color: 'text-gray-700 bg-white' },
+          { label: 'Portal Sourced',   value: candidates.filter((c:any)=>(c.source||'').toLowerCase().includes('portal')).length,                                         icon: Users,       color: 'text-teal-700 bg-teal-50' },
+          { label: 'Referrals',        value: candidates.filter((c:any)=>(c.source||'').toLowerCase().includes('referral')).length,                                       icon: UserPlus,    color: 'text-green-700 bg-green-50' },
+          { label: 'Avg Experience',   value: candidates.length ? Math.round(candidates.reduce((s:number,c:any)=>s+(c.experience_years||0),0)/candidates.length)+'y' : '—', icon: TrendingUp, color: 'text-purple-700 bg-purple-50' },
         ].map(s => (
           <div key={s.label} className={`${s.color} border border-gray-100 rounded-xl p-4 shadow-sm flex items-center gap-3`}>
             <s.icon size={20} className="flex-shrink-0"/>
@@ -94,6 +117,7 @@ export default function TalentPoolClient({ candidates, applications, jobs }: Pro
         <select value={source} onChange={e => setSource(e.target.value)}
           className="border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-500">
           <option value="all">All Sources</option>
+          <option value="portal">🔗 Portal Sourced (JSearch / LinkedIn / Indeed)</option>
           <option value="linkedin">LinkedIn</option>
           <option value="naukri">Naukri</option>
           <option value="referral">Referral</option>
@@ -117,7 +141,7 @@ export default function TalentPoolClient({ candidates, applications, jobs }: Pro
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-0.5">
                       <span className="font-medium text-sm text-gray-900 truncate">{c.full_name}</span>
-                      <span className={`text-xs px-1.5 py-0.5 rounded font-medium flex-shrink-0 ${SOURCE_COLORS[c.source] || 'bg-gray-100 text-gray-600'}`}>{c.source}</span>
+                      <span className={`text-xs px-1.5 py-0.5 rounded font-medium flex-shrink-0 ${sourceColor(c.source)}`}>{sourceLabel(c.source)}</span>
                     </div>
                     <div className="text-xs text-gray-500 truncate">{c.current_title} · {c.current_company}</div>
                     <div className="flex items-center gap-3 mt-1 text-xs text-gray-400">
@@ -158,7 +182,7 @@ export default function TalentPoolClient({ candidates, applications, jobs }: Pro
                       {selected.salary_expectation && <span>₹{selected.salary_expectation} LPA expected</span>}
                     </div>
                   </div>
-                  <span className={`text-xs px-2 py-1 rounded-full font-medium ${SOURCE_COLORS[selected.source] || 'bg-gray-100 text-gray-600'}`}>{selected.source}</span>
+                  <span className={`text-xs px-2 py-1 rounded-full font-medium ${sourceColor(selected.source)}`}>{sourceLabel(selected.source)}</span>
                 </div>
               </div>
 

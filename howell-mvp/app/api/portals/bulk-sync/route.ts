@@ -25,19 +25,19 @@ export async function POST(request: NextRequest) {
               .replace(/\s+/g, '.')
               .replace(/[^a-z0-9.]/g, '')}.${profile.source.toLowerCase().replace(/\s+/g,'')}@sourced.howell`
 
-        const candidateData = {
-          full_name:         profile.name,
-          email:             safeEmail,
-          phone:             (profile.phone && !profile.phone.includes('Available')) ? profile.phone : '',
-          current_title:     profile.title,
-          current_company:   '',
-          experience_years:  parseInt(profile.experience) || 0,
-          skills:            Array.isArray(profile.skills) ? profile.skills : [],
-          location:          profile.location || '',
+        const candidateData: Record<string, any> = {
+          full_name:          profile.name            || 'Unknown',
+          email:              safeEmail,
+          phone:              (profile.phone && !profile.phone.includes('Available')) ? profile.phone : '',
+          current_title:      profile.title           || '',
+          current_company:    'Via Portal Sync',
+          experience_years:   parseInt(profile.experience) || 0,
+          skills:             Array.isArray(profile.skills) ? profile.skills : [],
+          location:           profile.location        || '',
           salary_expectation: 0,
-          source:            `Portal Sync: ${profile.source}`,
-          summary:           profile.summary || '',
-          created_at:        new Date().toISOString(),
+          source:             `portal_sync_${(profile.source||'').toLowerCase().replace(/\s+/g,'_')}`,
+          summary:            profile.summary         || '',
+          created_at:         new Date().toISOString(),
         }
 
         const saved = await db.candidates.upsert(candidateData)
