@@ -372,9 +372,10 @@ export default function SourcingPage() {
                 {!bulkSaveStatus.done
                   ? <div className="flex items-center gap-2"><RefreshCw size={13} className="animate-spin"/> Auto-saving {bulkSaveStatus.total} profiles to HRMS database…</div>
                   : bulkSaveStatus.saved > 0
-                    ? <div className="flex items-center gap-2">
+                    ? <div className="flex items-center gap-2 flex-wrap">
                         <CheckCircle size={13}/>
-                        <span>{bulkSaveStatus.saved} of {bulkSaveStatus.total} profiles saved to HRMS database.</span>
+                        <span><strong>{bulkSaveStatus.saved}</strong> of {bulkSaveStatus.total} profiles added to <strong>Candidates Master</strong>.</span>
+                        <span className="text-green-600">Use "Move to Shortlisted" below to add them to the hiring pipeline.</span>
                         <strong className="underline cursor-pointer" onClick={()=>window.location.href='/talent-pool'}>View in Talent Pool →</strong>
                       </div>
                     : <div>
@@ -468,13 +469,16 @@ export default function SourcingPage() {
                         </div>
                       </div>
 
-                      {/* Profile is always auto-saved — this button promotes to shortlisted */}
-                      <div className="bg-green-50 border border-green-200 rounded-xl p-3 flex items-center gap-2.5 mb-2">
-                        <CheckCircle size={14} className="text-green-500 flex-shrink-0"/>
-                        <p className="text-xs text-green-700">
-                          <strong>Auto-saved to HRMS DB ✓</strong> — Profile is in your Candidates database.
-                          {selectedJob && ` Application created under "${selectedJob.title}".`}
-                        </p>
+                      {/* Status info */}
+                      <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 space-y-1.5 mb-2">
+                        <div className="flex items-center gap-2 text-xs text-blue-700">
+                          <CheckCircle size={13} className="text-blue-500 flex-shrink-0"/>
+                          <span><strong>Saved to Candidates Master</strong> — visible in Talent Pool for HR review.</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-xs text-gray-500">
+                          <Database size={13} className="flex-shrink-0"/>
+                          <span>Click below to add to the <strong>hiring pipeline</strong> for {selectedJob?.title || 'the selected role'}.</span>
+                        </div>
                       </div>
                       <button
                         onClick={() => {
@@ -484,8 +488,8 @@ export default function SourcingPage() {
                         disabled={shortlisted.has(selectedProfile.id)}
                         className={`w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold transition ${shortlisted.has(selectedProfile.id) ? 'bg-green-600 text-white cursor-default' : 'bg-red-700 hover:bg-red-800 text-white'}`}>
                         {shortlisted.has(selectedProfile.id)
-                          ? <><CheckCircle size={15}/> Shortlisted ✓</>
-                          : <><Zap size={15}/> Move to Shortlisted</>
+                          ? <><CheckCircle size={15}/> Added to Pipeline ✓</>
+                          : <><Zap size={15}/> Shortlist — Add to Hiring Pipeline</>
                         }
                       </button>
                     </div>
