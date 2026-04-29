@@ -119,7 +119,7 @@ export default function SourcingPage() {
       if (fetchedProfiles.length > 0) {
         setBulkSaveStatus({ saved: 0, total: fetchedProfiles.length, done: false })
         try {
-          const syncRes = await fetch('/api/portals/bulk-sync', {
+          const syncRes = await fetch('/api/portals/save-profiles', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
