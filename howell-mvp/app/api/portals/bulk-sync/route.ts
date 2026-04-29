@@ -47,36 +47,73 @@ export async function POST(request: NextRequest) {
           summary:            (profile.summary      || '').substring(0, 1000),
         }
 
-        // Upsert with full error visibility
-        const { data: upserted, error: upsertErr } = await svc()
+        // Step 1: Check if candidate already exists by email (avoids onConflict constraint dependency)
+        const { data: existing, error: findErr } = await svc()
           .from('candidates')
-          .upsert(candidateData, { onConflict: 'email' })
-          .select('id, full_name, email')
-          .single()
+          .select('id')
+          .eq('email', candidateData.email)
+          .limit(1)
 
-        if (upsertErr) {
-          errors.push(`${profile.name}: ${upsertErr.message}`)
+        if (findErr) {
+          errors.push(`[find] ${profile.name}: ${findErr.message}`)
+          failed++
+          continue
+        }
+
+        let candidateId: string | null = null
+
+        if (existing && existing.length > 0) {
+          // Already in DB — update to refresh portal data
+          const { error: updateErr } = await svc()
+            .from('candidates')
+            .update(candidateData)
+            .eq('id', existing[0].id)
+
+          if (updateErr) {
+            errors.push(`[update] ${profile.name}: ${updateErr.message}`)
+            failed++
+            continue
+          }
+          candidateId = existing[0].id
+
+        } else {
+          // New candidate — plain INSERT (no onConflict needed)
+          const { data: inserted, error: insertErr } = await svc()
+            .from('candidates')
+            .insert(candidateData)
+            .select('id')
+            .single()
+
+          if (insertErr) {
+            errors.push(`[insert] ${profile.name}: ${insertErr.message}`)
+            failed++
+            continue
+          }
+          candidateId = inserted?.id || null
+        }
+
+        if (!candidateId) {
+          errors.push(`${profile.name}: no ID returned after save`)
           failed++
           continue
         }
 
         saved++
-        savedCandidateIds[profile.id] = upserted.id
+        savedCandidateIds[profile.id] = candidateId
 
-        // Create application record if job context provided
-        if (upserted && jobId) {
-          // Check if application already exists
-          const { data: existing } = await svc()
+        // Step 2: Create application record if job context provided
+        if (jobId) {
+          const { data: existingApp } = await svc()
             .from('applications')
             .select('id')
             .eq('job_id', jobId)
-            .eq('candidate_id', upserted.id)
+            .eq('candidate_id', candidateId)
             .limit(1)
 
-          if (!existing || existing.length === 0) {
+          if (!existingApp || existingApp.length === 0) {
             await svc().from('applications').insert({
               job_id:           jobId,
-              candidate_id:     upserted.id,
+              candidate_id:     candidateId,
               status:           'applied',
               ai_match_score:   profile.matchScore || 0,
               ai_match_summary: `Auto-sourced from ${profile.source} via AI portal sync. Match score: ${profile.matchScore || 0}%`,
@@ -88,7 +125,7 @@ export async function POST(request: NextRequest) {
         }
 
       } catch (err: any) {
-        errors.push(`${profile.name}: ${err.message}`)
+        errors.push(`[exception] ${profile.name}: ${err.message}`)
         failed++
       }
     }
@@ -96,7 +133,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       saved,
       failed,
-      total: profiles.length,
+      total:  profiles.length,
       errors: errors.length > 0 ? errors : undefined,
     })
 
