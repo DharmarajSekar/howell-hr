@@ -17,9 +17,28 @@ function db() {
 // ── CREATE: kick off Tavus conversation ──────────────────────────────────────
 export async function POST(req: NextRequest) {
   try {
-    const { applicationId, roundId, candidateName, jobTitle, questions, personaId } = await req.json()
+    const { applicationId, roundId, candidateName, jobTitle, questions: passedQuestions, personaId, autoGenerateQuestions, roundNumber, roundName } = await req.json()
 
     const tavusKey = process.env.TAVUS_API_KEY
+
+    // ── Auto-generate personalised questions if enabled ──────
+    let questions = passedQuestions || []
+    if (autoGenerateQuestions !== false && applicationId) {
+      try {
+        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+        const genRes = await fetch(`${baseUrl}/api/interviews/generate-questions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ applicationId, roundId, roundNumber, roundName }),
+        })
+        const genData = await genRes.json()
+        if (genData.questions && genData.questions.length > 0) {
+          questions = genData.questions
+        }
+      } catch (genErr: any) {
+        console.error('Question generation failed, using passed questions:', genErr.message)
+      }
+    }
 
     let tavusConversationId: string | null = null
     let tavusConversationUrl: string | null = null

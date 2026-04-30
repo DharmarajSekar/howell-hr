@@ -23,8 +23,9 @@ CREATE TABLE IF NOT EXISTS interview_rounds (
   type                  text NOT NULL DEFAULT 'ai', -- 'ai' | 'manual' | 'panel'
   duration_minutes      int NOT NULL DEFAULT 30,
   -- AI settings (only for type='ai')
-  tavus_persona_id      text,                     -- Tavus persona/replica ID
-  ai_questions          jsonb DEFAULT '[]',        -- array of question strings
+  tavus_persona_id           text,                -- Tavus persona/replica ID
+  ai_questions               jsonb DEFAULT '[]',  -- array of question strings (used if auto_generate is off)
+  ai_auto_generate_questions boolean NOT NULL DEFAULT true, -- generate questions per candidate using AI
   -- Scoring & progression
   pass_score_threshold  int NOT NULL DEFAULT 60,  -- score >= this to pass to next round
   -- Auto-scheduling settings

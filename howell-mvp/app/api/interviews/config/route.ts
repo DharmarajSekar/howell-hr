@@ -68,9 +68,10 @@ export async function POST(req: NextRequest) {
         name:                 r.name,
         type:                 r.type,
         duration_minutes:     r.duration_minutes,
-        tavus_persona_id:     r.tavus_persona_id || null,
-        ai_questions:         r.ai_questions || [],
-        pass_score_threshold: r.pass_score_threshold,
+        tavus_persona_id:              r.tavus_persona_id || null,
+        ai_questions:                  r.ai_questions || [],
+        ai_auto_generate_questions:    r.ai_auto_generate_questions !== false, // default true
+        pass_score_threshold:          r.pass_score_threshold,
         auto_schedule:        r.auto_schedule,
         score_trigger:        r.score_trigger,
         delay_hours:          r.delay_hours,

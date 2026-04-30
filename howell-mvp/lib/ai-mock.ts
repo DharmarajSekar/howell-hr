@@ -104,6 +104,86 @@ export async function mockParseResume(): Promise<any> {
   return MOCK_RESUMES[Math.floor(Math.random() * MOCK_RESUMES.length)]
 }
 
+// ── AI Interview Question Generator ──────────────────────────
+export async function mockGenerateInterviewQuestions(params: {
+  jobTitle: string
+  jobDescription?: string
+  jobRequirements?: string
+  candidateName: string
+  candidateTitle: string
+  candidateExperienceYears: number
+  candidateSkills: string[]
+  candidateSummary?: string
+  roundName: string
+  roundNumber: number
+}): Promise<string[]> {
+  await new Promise(r => setTimeout(r, 800))
+
+  const {
+    jobTitle, candidateTitle, candidateExperienceYears,
+    candidateSkills, candidateSummary, roundName, roundNumber
+  } = params
+
+  const skills    = candidateSkills.slice(0, 4).join(', ')
+  const seniorityLabel = candidateExperienceYears >= 8 ? 'senior' : candidateExperienceYears >= 4 ? 'mid-level' : 'junior'
+  const t = jobTitle.toLowerCase()
+
+  // Opening question — always personalised
+  const opener = `${params.candidateName}, you are currently a ${candidateTitle} with ${candidateExperienceYears} years of experience. Walk me through your journey and what specifically draws you to this ${jobTitle} role at Howell.`
+
+  // Skills deep-dive — pick top 2 skills from their profile
+  const topSkill1 = candidateSkills[0] || 'your primary technical skill'
+  const topSkill2 = candidateSkills[1] || 'a secondary skill'
+  const skillsQ = `Your profile highlights ${topSkill1} and ${topSkill2} as key strengths. Can you describe a specific project where you applied both and what the outcome was?`
+
+  // Experience gap or depth question
+  const expQ = candidateExperienceYears < 5
+    ? `You have ${candidateExperienceYears} years of experience. Tell me about the most complex challenge you have handled independently so far, and how you approached it.`
+    : `With ${candidateExperienceYears} years as a ${seniorityLabel} professional, describe a time you mentored junior team members or led a team through a high-pressure situation.`
+
+  // Role-specific domain questions
+  let domainQs: string[] = []
+
+  if (t.includes('engineer') || t.includes('site') || t.includes('elv') || t.includes('mep')) {
+    domainQs = [
+      `Describe the largest project you have handled in terms of scope and team size. What was your specific contribution and how did you ensure quality delivery?`,
+      `How do you typically handle scope creep or sudden client requirement changes mid-project? Give me a real example.`,
+      `Walk me through your experience with ${topSkill1}. What is the most technically complex implementation you have done with it?`,
+    ]
+  } else if (t.includes('hr') || t.includes('human resource') || t.includes('talent') || t.includes('people')) {
+    domainQs = [
+      `Give me an example of a time you handled a sensitive employee relations issue. How did you balance the employee's interests with the company's?`,
+      `How have you used data or HR analytics to influence a key business decision? What metrics did you track?`,
+      `Describe your experience with performance management cycles — how do you ensure the process is fair, motivating, and legally compliant?`,
+    ]
+  } else if (t.includes('analyst') || t.includes('data') || t.includes('bi') || t.includes('insight')) {
+    domainQs = [
+      `Walk me through a dashboard or analytical model you built from scratch. What business problem did it solve and what tools did you use?`,
+      `Describe a time your data analysis led to a counterintuitive finding. How did you present it to stakeholders and what happened next?`,
+      `How do you validate the accuracy of your data before presenting insights? Describe your QA process.`,
+    ]
+  } else if (t.includes('manager') || t.includes('lead') || t.includes('head') || t.includes('director')) {
+    domainQs = [
+      `Tell me about a time you had to make a difficult people decision — a performance issue, restructuring, or a conflict within your team.`,
+      `How do you set goals for your team and ensure accountability without micromanaging?`,
+      `Describe the most significant business impact you have delivered in a leadership role. What was your approach and how did you measure success?`,
+    ]
+  } else {
+    domainQs = [
+      `Tell me about a project where you had to learn something completely new on the job. How did you approach it and what was the result?`,
+      `Describe a situation where you disagreed with your manager or stakeholder. How did you handle it professionally?`,
+      `What does your day-to-day work look like currently, and how does this ${jobTitle} role represent a step forward for you?`,
+    ]
+  }
+
+  // Closing — always round-aware
+  const closingQ = roundNumber === 1
+    ? `Finally, what are your salary expectations for this role, and what is your earliest possible joining date if selected?`
+    : `As you reflect on this interview, what is the one thing about your background that you feel we have not fully explored yet, and that you would want us to know?`
+
+  return [opener, skillsQ, expQ, ...domainQs.slice(0, 3), closingQ]
+}
+
 // ── Match Score Mock ──────────────────────────────────────────
 export async function mockScoreResume(jobTitle: string, candidateName: string): Promise<{
   score: number; summary: string; strengths: string[]; gaps: string[]

@@ -19,6 +19,7 @@ interface Round {
   requires_approval: boolean
   tavus_persona_id: string
   ai_questions: string[]
+  ai_auto_generate_questions: boolean
   is_active?: boolean
 }
 
@@ -41,6 +42,7 @@ const DEFAULT_ROUND: Round = {
   requires_approval: true,
   tavus_persona_id: '',
   ai_questions: [],
+  ai_auto_generate_questions: true,
 }
 
 const DEFAULT_AI_QUESTIONS = [
@@ -87,6 +89,7 @@ export default function InterviewConfigPage() {
           ...r,
           ai_questions: r.ai_questions || [],
           tavus_persona_id: r.tavus_persona_id || '',
+          ai_auto_generate_questions: r.ai_auto_generate_questions !== false,
         })))
       } else {
         setConfig(null)
@@ -97,6 +100,7 @@ export default function InterviewConfigPage() {
           round_number: i + 1,
           ai_questions: r.ai_questions || [],
           tavus_persona_id: r.tavus_persona_id || '',
+          ai_auto_generate_questions: true,
         })))
       }
       setExpandedRound(0)
@@ -339,6 +343,7 @@ function RoundCard({
   onUpdateQuestion: (qIdx: number, val: string) => void
   onRemoveQuestion: (qIdx: number) => void
   onLoadDefaultQuestions: () => void
+  // ai_auto_generate_questions handled via onUpdate
 }) {
   const isAI = round.type === 'ai'
 
@@ -503,11 +508,54 @@ function RoundCard({
                 </p>
               </div>
 
-              {/* AI Questions */}
+              {/* AI Auto-Generate Questions Toggle */}
+              <div className={`rounded-xl border p-4 transition-colors ${round.ai_auto_generate_questions ? 'bg-violet-100 border-violet-300' : 'bg-white border-gray-200'}`}>
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <div
+                    onClick={() => onUpdate('ai_auto_generate_questions', !round.ai_auto_generate_questions)}
+                    className={`relative mt-0.5 w-11 h-6 rounded-full transition-colors cursor-pointer flex-shrink-0 ${round.ai_auto_generate_questions ? 'bg-violet-600' : 'bg-gray-300'}`}
+                  >
+                    <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${round.ai_auto_generate_questions ? 'translate-x-5' : ''}`} />
+                  </div>
+                  <div>
+                    <div className="text-sm font-semibold text-gray-800 flex items-center gap-1.5">
+                      🤖 AI Auto-Generate Questions
+                      {round.ai_auto_generate_questions && (
+                        <span className="text-[10px] bg-violet-600 text-white px-1.5 py-0.5 rounded-full font-bold">ON</span>
+                      )}
+                    </div>
+                    <div className="text-xs text-gray-500 mt-0.5">
+                      {round.ai_auto_generate_questions
+                        ? 'Questions are generated dynamically per candidate — tailored to their resume, skills, experience level, and identified gaps.'
+                        : 'Use the fixed questions below for all candidates in this round.'}
+                    </div>
+                  </div>
+                </label>
+
+                {round.ai_auto_generate_questions && (
+                  <div className="mt-3 pl-14">
+                    <div className="bg-white border border-violet-200 rounded-lg px-3 py-2.5 space-y-1.5">
+                      <p className="text-xs font-medium text-violet-700">What AI considers per candidate:</p>
+                      {[
+                        '📄 Resume skills & experience years',
+                        '🎯 Job description & requirements',
+                        '🔍 AI-identified skill gaps from screening',
+                        '📊 Seniority level (junior / mid / senior)',
+                        '🏢 Current company & role context',
+                      ].map((item, i) => (
+                        <p key={i} className="text-xs text-gray-600">{item}</p>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Fallback / Manual Questions (shown when auto-generate is OFF, or as backup) */}
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <label className="text-xs font-medium text-gray-600 flex items-center gap-1.5">
-                    <HelpCircle size={12} className="text-violet-500" /> Interview Questions
+                    <HelpCircle size={12} className="text-violet-500" />
+                    {round.ai_auto_generate_questions ? 'Fallback Questions (if AI unavailable)' : 'Interview Questions'}
                     <span className="text-gray-400">({round.ai_questions.length})</span>
                   </label>
                   <div className="flex gap-2">
@@ -547,7 +595,9 @@ function RoundCard({
                   ))}
                   {round.ai_questions.length === 0 && (
                     <p className="text-xs text-gray-400 italic py-2 pl-7">
-                      No questions yet. Add questions or load defaults above.
+                      {round.ai_auto_generate_questions
+                        ? 'No fallback questions — AI generation will be used.'
+                        : 'No questions yet. Add questions or load defaults above.'}
                     </p>
                   )}
                 </div>
