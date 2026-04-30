@@ -92,6 +92,92 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: appErr.message }, { status: 500 })
     }
 
+    // ── Auto-score the application via AI ────────────────────
+    // Fetch new application id
+    const { data: newApp } = await db()
+      .from('applications')
+      .select('id')
+      .eq('job_id', jobId)
+      .eq('candidate_id', candidateId)
+      .limit(1)
+
+    if (newApp && newApp.length > 0) {
+      const appId = newApp[0].id
+      try {
+        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+        // Run AI scoring
+        const scoreRes = await fetch(`${baseUrl}/api/ai/score-resume`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jobTitle:      (await db().from('jobs').select('title').eq('id', jobId).single()).data?.title || '',
+            candidateName: candidates[0].full_name,
+          }),
+        })
+        const scoreData = await scoreRes.json()
+        if (scoreData.score) {
+          await db()
+            .from('applications')
+            .update({
+              ai_match_score:   scoreData.score,
+              ai_match_summary: scoreData.summary,
+              ai_strengths:     scoreData.strengths || [],
+              ai_gaps:          scoreData.gaps || [],
+            })
+            .eq('id', appId)
+
+          // ── Check auto-schedule threshold ─────────────────
+          const { data: configs } = await db()
+            .from('interview_pipeline_configs')
+            .select('id, auto_schedule_enabled, rounds:interview_rounds(*)')
+            .eq('job_id', jobId)
+            .eq('auto_schedule_enabled', true)
+            .limit(1)
+
+          if (configs && configs.length > 0) {
+            const config = configs[0]
+            const aiRounds = (config.rounds || [])
+              .filter((r: any) => r.is_active && r.auto_schedule && r.type === 'ai')
+              .sort((a: any, b: any) => a.round_number - b.round_number)
+
+            for (const round of aiRounds) {
+              if (scoreData.score >= round.score_trigger) {
+                // Check not already queued
+                const { data: existing } = await db()
+                  .from('interview_auto_queue')
+                  .select('id')
+                  .eq('application_id', appId)
+                  .eq('round_id', round.id)
+                  .limit(1)
+
+                if (!existing || existing.length === 0) {
+                  const scheduledFor = new Date(Date.now() + round.delay_hours * 60 * 60 * 1000)
+                  await db().from('interview_auto_queue').insert({
+                    application_id: appId,
+                    round_id:       round.id,
+                    trigger_score:  scoreData.score,
+                    scheduled_for:  scheduledFor.toISOString(),
+                    status:         round.requires_approval ? 'pending' : 'approved',
+                  })
+
+                  // If auto-approved, create session immediately
+                  if (!round.requires_approval) {
+                    await fetch(`${baseUrl}/api/interviews/start-ai-interview`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ applicationId: appId, roundId: round.id }),
+                    })
+                  }
+                }
+              }
+            }
+          }
+        }
+      } catch (scoreErr: any) {
+        console.error('Auto-score error (non-fatal):', scoreErr.message)
+      }
+    }
+
     return NextResponse.json({ success: true, action: 'shortlisted', candidateId })
 
   } catch (error: any) {

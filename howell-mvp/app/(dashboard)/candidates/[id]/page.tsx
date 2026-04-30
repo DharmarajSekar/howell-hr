@@ -2,20 +2,24 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, Mail, Phone, MapPin, Briefcase, Loader2, Sparkles, CheckCircle, XCircle, Calendar, FileText } from 'lucide-react'
+import { ArrowLeft, Mail, Phone, MapPin, Briefcase, Loader2, Sparkles, CheckCircle, XCircle, Calendar, FileText, Bot, Video, ExternalLink } from 'lucide-react'
 import { formatCurrency, STATUS_LABELS, STATUS_COLORS, cn } from '@/lib/utils'
 import { useToast } from '@/components/ui/Toast'
 import InterviewScheduler from '@/components/candidates/InterviewScheduler'
 import OfferLetterModal from '@/components/candidates/OfferLetterModal'
 import type { Candidate, Application } from '@/types'
+import { useRouter } from 'next/navigation'
 
 export default function CandidateDetailPage() {
   const { id } = useParams()
   const { toast } = useToast()
-  const [candidate, setCandidate] = useState<Candidate | null>(null)
-  const [apps, setApps]           = useState<Application[]>([])
-  const [loading, setLoading]     = useState(true)
-  const [scoring, setScoring]     = useState<string | null>(null)
+  const router = useRouter()
+  const [candidate, setCandidate]     = useState<Candidate | null>(null)
+  const [apps, setApps]               = useState<Application[]>([])
+  const [aiSessions, setAISessions]   = useState<any[]>([])
+  const [loading, setLoading]         = useState(true)
+  const [scoring, setScoring]         = useState<string | null>(null)
+  const [startingAI, setStartingAI]   = useState<string | null>(null)
   const [scheduleApp, setScheduleApp] = useState<Application | null>(null)
   const [offerApp, setOfferApp]       = useState<Application | null>(null)
 
@@ -26,7 +30,20 @@ export default function CandidateDetailPage() {
     ])
     const cand = candRes.find((c: Candidate) => c.id === id)
     setCandidate(cand || null)
-    setApps(appsRes.filter((a: Application) => a.candidate_id === id))
+    const candidateApps = appsRes.filter((a: Application) => a.candidate_id === id)
+    setApps(candidateApps)
+
+    // Load AI sessions for all applications of this candidate
+    if (candidateApps.length > 0) {
+      const sessions: any[] = []
+      for (const app of candidateApps) {
+        const sessRes = await fetch(`/api/interviews/ai-sessions?applicationId=${app.id}`)
+        const sessData = await sessRes.json()
+        sessions.push(...(sessData.sessions || []))
+      }
+      setAISessions(sessions)
+    }
+
     setLoading(false)
   }
 
@@ -52,6 +69,26 @@ export default function CandidateDetailPage() {
     toast(`Match score: ${score}% for ${candidate.full_name}`)
   }
 
+  async function startAIInterview(app: Application) {
+    setStartingAI(app.id)
+    try {
+      const res = await fetch('/api/interviews/start-ai-interview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ applicationId: app.id }),
+      })
+      const data = await res.json()
+      if (data.sessionId) {
+        toast(`AI interview session created! Redirecting…`)
+        router.push(`/interview/ai-room?sessionId=${data.sessionId}`)
+      } else {
+        toast(data.error || 'Failed to start AI interview')
+      }
+    } finally {
+      setStartingAI(null)
+    }
+  }
+
   async function moveStatus(appId: string, status: string) {
     await fetch(`/api/applications/${appId}`, {
       method: 'PATCH',
@@ -73,8 +110,9 @@ export default function CandidateDetailPage() {
 
   const initials = candidate.full_name.split(' ').map((n: string) => n[0]).join('').slice(0, 2)
 
-  const CAN_SCHEDULE = ['shortlisted', 'screening', 'applied']
-  const CAN_OFFER    = ['interview_done', 'shortlisted']
+  const CAN_SCHEDULE    = ['shortlisted', 'screening', 'applied']
+  const CAN_AI_INTERVIEW = ['shortlisted', 'screening', 'applied', 'interview_scheduled']
+  const CAN_OFFER       = ['interview_done', 'shortlisted']
 
   return (
     <div className="p-8 max-w-4xl mx-auto">
@@ -194,10 +232,23 @@ export default function CandidateDetailPage() {
 
                 {/* Action Buttons */}
                 <div className="flex flex-wrap gap-2 pt-3 border-t border-gray-50">
+                  {/* AI Interview — primary CTA */}
+                  {CAN_AI_INTERVIEW.includes(app.status) && (
+                    <button
+                      onClick={() => startAIInterview(app)}
+                      disabled={startingAI === app.id}
+                      className="flex items-center gap-1.5 text-xs font-semibold bg-violet-600 text-white hover:bg-violet-700 px-3 py-1.5 rounded-lg transition disabled:opacity-60"
+                    >
+                      {startingAI === app.id
+                        ? <><Loader2 size={12} className="animate-spin" /> Starting…</>
+                        : <><Bot size={12} /> Start AI Interview</>
+                      }
+                    </button>
+                  )}
                   {CAN_SCHEDULE.includes(app.status) && (
                     <button onClick={() => setScheduleApp({ ...app, candidate, job: app.job } as Application)}
                       className="flex items-center gap-1.5 text-xs font-medium border border-amber-200 text-amber-700 hover:bg-amber-50 px-3 py-1.5 rounded-lg transition">
-                      <Calendar size={12} /> Schedule Interview
+                      <Calendar size={12} /> Manual Interview
                     </button>
                   )}
                   {app.status === 'interview_scheduled' && (
@@ -230,6 +281,76 @@ export default function CandidateDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* AI Interview Sessions */}
+      {aiSessions.length > 0 && (
+        <div className="mt-6 max-w-4xl mx-auto">
+          <h2 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+            <Bot size={16} className="text-violet-600" /> AI Interview Sessions ({aiSessions.length})
+          </h2>
+          <div className="space-y-3">
+            {aiSessions.map((s: any) => {
+              const statusMap: Record<string, string> = {
+                scheduled: 'bg-amber-100 text-amber-700',
+                in_progress: 'bg-red-100 text-red-700',
+                completed: 'bg-green-100 text-green-700',
+                failed: 'bg-red-100 text-red-500',
+                cancelled: 'bg-gray-100 text-gray-500',
+              }
+              return (
+                <div key={s.id} className="bg-white border border-violet-100 rounded-xl p-4 flex items-center justify-between gap-4">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-semibold text-gray-800">
+                        {s.round?.name || 'AI Screening Round'}
+                      </span>
+                      <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${statusMap[s.status] || 'bg-gray-100 text-gray-600'}`}>
+                        {s.status.replace('_', ' ')}
+                      </span>
+                      {s.ai_score !== null && s.ai_score !== undefined && (
+                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${s.ai_score >= 75 ? 'bg-green-100 text-green-700' : s.ai_score >= 55 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-600'}`}>
+                          Score: {s.ai_score}/100
+                        </span>
+                      )}
+                      {s.recommendation && (
+                        <span className={`text-xs font-medium ${s.recommendation === 'pass' ? 'text-green-600' : s.recommendation === 'fail' ? 'text-red-500' : 'text-amber-600'}`}>
+                          {s.recommendation === 'pass' ? '✓ Pass' : s.recommendation === 'fail' ? '✗ Fail' : '~ Maybe'}
+                        </span>
+                      )}
+                    </div>
+                    {s.scheduled_at && (
+                      <p className="text-xs text-gray-400 mt-1">
+                        Scheduled: {new Date(s.scheduled_at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
+                      </p>
+                    )}
+                    {s.ai_evaluation && (
+                      <p className="text-xs text-gray-600 mt-1 line-clamp-2">{s.ai_evaluation}</p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <Link
+                      href={`/interview/ai-room?sessionId=${s.id}`}
+                      className="flex items-center gap-1.5 text-xs bg-violet-600 text-white px-3 py-1.5 rounded-lg hover:bg-violet-700 transition"
+                    >
+                      <Video size={12} /> View Room
+                    </Link>
+                    {s.tavus_conversation_url && s.status !== 'completed' && (
+                      <a
+                        href={s.tavus_conversation_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1.5 text-xs border border-violet-300 text-violet-600 px-3 py-1.5 rounded-lg hover:bg-violet-50 transition"
+                      >
+                        <ExternalLink size={12} /> Join Live
+                      </a>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Modals */}
       {scheduleApp && (
