@@ -155,13 +155,13 @@ INSERT INTO hiring_decisions (application_id, candidate_name, job_title, ai_reco
 
 -- ── BGV Records (Stage 8 demo data) ──────────────────────────
 INSERT INTO bgv_records (id, candidate_id, application_id, candidate_name, job_title, status, identity_check, education_check, employment_check, address_check, criminal_check, fraud_flag) VALUES
-('g1000001-0000-0000-0000-000000000001','b1000001-0000-0000-0000-000000000006','c1000001-0000-0000-0000-000000000006','Amit Singh','HR Business Partner','completed','verified','verified','verified','verified','verified',FALSE),
-('g1000001-0000-0000-0000-000000000002','b1000001-0000-0000-0000-000000000007','c1000001-0000-0000-0000-000000000007','Neha Gupta','Senior Site Engineer','in_progress','verified','verified','in_review','pending','pending',FALSE);
+('ab000001-0000-0000-0000-000000000001','b1000001-0000-0000-0000-000000000006','c1000001-0000-0000-0000-000000000006','Amit Singh','HR Business Partner','completed','verified','verified','verified','verified','verified',FALSE),
+('ab000001-0000-0000-0000-000000000002','b1000001-0000-0000-0000-000000000007','c1000001-0000-0000-0000-000000000007','Neha Gupta','Senior Site Engineer','in_progress','verified','verified','in_review','pending','pending',FALSE);
 
 INSERT INTO bgv_documents (bgv_record_id, document_type, file_name, status, verified) VALUES
-('g1000001-0000-0000-0000-000000000001','Aadhaar Card','aadhaar_card_amit_singh.pdf','uploaded',TRUE),
-('g1000001-0000-0000-0000-000000000001','PAN Card','pan_card_amit_singh.pdf','uploaded',TRUE),
-('g1000001-0000-0000-0000-000000000001','Degree Certificate','degree_certificate_amit_singh.pdf','uploaded',TRUE),
-('g1000001-0000-0000-0000-000000000001','Relieving Letter','relieving_letter_wipro.pdf','uploaded',TRUE),
-('g1000001-0000-0000-0000-000000000002','Aadhaar Card','aadhaar_card_neha_gupta.pdf','uploaded',TRUE),
-('g1000001-0000-0000-0000-000000000002','PAN Card','pan_card_neha_gupta.pdf','uploaded',FALSE);
+('ab000001-0000-0000-0000-000000000001','Aadhaar Card','aadhaar_card_amit_singh.pdf','uploaded',TRUE),
+('ab000001-0000-0000-0000-000000000001','PAN Card','pan_card_amit_singh.pdf','uploaded',TRUE),
+('ab000001-0000-0000-0000-000000000001','Degree Certificate','degree_certificate_amit_singh.pdf','uploaded',TRUE),
+('ab000001-0000-0000-0000-000000000001','Relieving Letter','relieving_letter_wipro.pdf','uploaded',TRUE),
+('ab000001-0000-0000-0000-000000000002','Aadhaar Card','aadhaar_card_neha_gupta.pdf','uploaded',TRUE),
+('ab000001-0000-0000-0000-000000000002','PAN Card','pan_card_neha_gupta.pdf','uploaded',FALSE);

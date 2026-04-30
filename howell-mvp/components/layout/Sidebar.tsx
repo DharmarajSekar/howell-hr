@@ -8,7 +8,7 @@ import {
   UserCheck, Globe, Bot, BarChart2, ShieldCheck, ChevronDown,
   ChevronRight, Database, MessageSquare, Gift, Star, ClipboardList,
   TrendingDown, DoorOpen, Package, BookOpen, Home, AlertCircle,
-  UserCog, Activity, Link2
+  UserCog, Activity, Link2, Video, Settings2
 } from 'lucide-react'
 
 const SECTIONS = [
@@ -27,6 +27,7 @@ const SECTIONS = [
       { href: '/candidates',        label: 'Candidates',        icon: Users },
       { href: '/pre-screen',        label: 'Pre-Screen Bot',    icon: Bot },
       { href: '/interviews',        label: 'Interviews',        icon: Calendar },
+      { href: '/interview/ai-room', label: 'AI Interview Room', icon: Video,    badge: '' },
       { href: '/hiring-decisions',  label: 'Hire / Hold',       icon: BarChart2 },
     ]
   },
@@ -66,7 +67,8 @@ const SECTIONS = [
   {
     label: 'Settings',
     items: [
-      { href: '/integrations', label: 'Portal Integrations', icon: Link2, badge: '' },
+      { href: '/integrations',              label: 'Portal Integrations',  icon: Link2,     badge: '' },
+      { href: '/settings/interview-config', label: 'Interview Pipeline',   icon: Settings2, badge: '' },
     ]
   },
 ]
