@@ -1,6 +1,6 @@
 'use client'
 import { useState } from 'react'
-import { MessageSquare, Send, Phone, Mail, MessageCircle, Plus, Search, Bot, Clock, CheckCheck, Filter } from 'lucide-react'
+import { MessageSquare, Send, Phone, Mail, MessageCircle, Plus, Search, Bot, Clock, CheckCheck, Filter, X } from 'lucide-react'
 
 const CHANNELS = ['All','WhatsApp','Email','SMS']
 const STAGES   = ['All Stages','Applied','Screening','Shortlisted','Interview','Offer','Hired','Rejected']
@@ -118,7 +118,13 @@ export default function CommunicationsPage() {
             <div className="ml-auto relative">
               <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400"/>
               <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search…"
-                className="pl-7 pr-3 py-1.5 border border-gray-200 rounded-full text-xs focus:outline-none focus:ring-2 focus:ring-red-500"/>
+                className="pl-7 pr-7 py-1.5 border border-gray-200 rounded-full text-xs focus:outline-none focus:ring-2 focus:ring-red-500"/>
+              {search && (
+                <button onClick={() => setSearch('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition">
+                  <X size={12}/>
+                </button>
+              )}
             </div>
           </div>
 

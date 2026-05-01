@@ -1,6 +1,6 @@
 'use client'
 import { useState } from 'react'
-import { Package, Plus, AlertTriangle, CheckCircle, Clock, Search, Filter, Laptop, Smartphone, Car, Tool, Wrench } from 'lucide-react'
+import { Package, Plus, AlertTriangle, CheckCircle, Clock, Search, Filter, Laptop, Smartphone, Car, Tool, Wrench, X } from 'lucide-react'
 
 const ASSET_CATEGORIES = ['Laptop','Mobile Phone','Vehicle','Tools & Equipment','Safety Gear','Access Card','Other']
 
@@ -108,7 +108,13 @@ export default function AssetsPage() {
         <div className="relative flex-1 max-w-sm">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search asset or employee…"
-            className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"/>
+            className="w-full pl-9 pr-8 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"/>
+          {search && (
+            <button onClick={() => setSearch('')}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition">
+              <X size={13}/>
+            </button>
+          )}
         </div>
         <div className="flex gap-2">
           {[['all','All'],['assigned','Assigned'],['available','Available'],['maintenance','Maintenance'],['lost','Lost']].map(([k,l]) => (

@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { Globe, Search, Zap, CheckCircle, Clock, Send, RefreshCw, User, MapPin, TrendingUp, BarChart2, AlertTriangle, Database, Archive } from 'lucide-react'
+import { Globe, Search, Zap, CheckCircle, Clock, Send, RefreshCw, User, MapPin, TrendingUp, BarChart2, AlertTriangle, Database, Archive, X } from 'lucide-react'
 
 const PORTALS = [
   { id:'linkedin', name:'LinkedIn',           logo:'🔵', connected: false, pendingApproval: true  },
@@ -398,18 +398,30 @@ export default function SourcingPage() {
               </div>
             )}
             <div className="flex items-end gap-4">
-              <div className="flex-1">
+              <div className="flex-1 relative">
                 <label className="block text-xs font-semibold text-gray-600 mb-1.5">Role / Skills (auto-filled from JD)</label>
                 <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
                   placeholder="e.g. ELV Engineer BMS CCTV"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"/>
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 pr-8 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"/>
+                {searchQuery && (
+                  <button onClick={() => setSearchQuery('')}
+                    className="absolute right-2.5 bottom-2 text-gray-400 hover:text-gray-600 transition">
+                    <X size={14}/>
+                  </button>
+                )}
               </div>
               {sourceMode === 'external' && (
-                <div className="w-44">
+                <div className="w-44 relative">
                   <label className="block text-xs font-semibold text-gray-600 mb-1.5">Location (optional)</label>
                   <input value={searchLocation} onChange={e => setSearchLocation(e.target.value)}
                     placeholder={selectedJob?.location || 'e.g. Mumbai'}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"/>
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 pr-8 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"/>
+                  {searchLocation && (
+                    <button onClick={() => setSearchLocation('')}
+                      className="absolute right-2.5 bottom-2 text-gray-400 hover:text-gray-600 transition">
+                      <X size={14}/>
+                    </button>
+                  )}
                 </div>
               )}
               {sourceMode === 'external' ? (
@@ -615,11 +627,17 @@ export default function SourcingPage() {
         <div>
           <div className="bg-white border border-gray-100 rounded-xl p-4 shadow-sm mb-5">
             <div className="flex items-end gap-4">
-              <div className="flex-1">
+              <div className="flex-1 relative">
                 <label className="block text-xs font-semibold text-gray-600 mb-1.5">Role / Job Title</label>
                 <input value={marketQuery} onChange={e => setMarketQuery(e.target.value)}
                   placeholder={selectedJob?.title || 'e.g. ELV Engineer'}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"/>
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 pr-8 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"/>
+                {marketQuery && (
+                  <button onClick={() => setMarketQuery('')}
+                    className="absolute right-2.5 bottom-2 text-gray-400 hover:text-gray-600 transition">
+                    <X size={14}/>
+                  </button>
+                )}
               </div>
               <button onClick={fetchMarketData} disabled={loadingMarket}
                 className="flex items-center gap-2 bg-red-700 hover:bg-red-800 text-white px-5 py-2 rounded-lg text-sm font-semibold transition disabled:opacity-60">
