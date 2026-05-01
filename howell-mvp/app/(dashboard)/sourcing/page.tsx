@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { Globe, Search, Zap, CheckCircle, Clock, Send, RefreshCw, User, MapPin, TrendingUp, BarChart2, AlertTriangle, Database } from 'lucide-react'
+import { Globe, Search, Zap, CheckCircle, Clock, Send, RefreshCw, User, MapPin, TrendingUp, BarChart2, AlertTriangle, Database, Archive } from 'lucide-react'
 
 const PORTALS = [
   { id:'linkedin', name:'LinkedIn',           logo:'🔵', connected: false, pendingApproval: true  },
@@ -58,6 +58,9 @@ export default function SourcingPage() {
   const [synced, setSynced]                   = useState<Record<string, 'syncing'|'done'|'error'>>({})
   const [bulkSaveStatus, setBulkSaveStatus]   = useState<{saved:number;failed:number;total:number;done:boolean;errors?:string[]}|null>(null)
   const [shortlisted, setShortlisted]         = useState<Set<string>>(new Set())
+
+  // Source mode: external AI fetch vs internal DB search
+  const [sourceMode, setSourceMode]           = useState<'external'|'internal'>('external')
 
   // Market tab
   const [marketQuery, setMarketQuery]         = useState('')
@@ -144,6 +147,39 @@ export default function SourcingPage() {
           setBulkSaveStatus({ saved: 0, failed: fetchedProfiles.length, total: fetchedProfiles.length, done: true, errors: [e?.message || 'Network error calling bulk-sync'] })
         }
       }
+    } catch {
+      setProfiles([])
+    } finally {
+      setLoadingProfiles(false)
+    }
+  }
+
+  async function fetchInternalProfiles() {
+    setLoadingProfiles(true)
+    setSelectedProfile(null)
+    setBulkSaveStatus(null)
+    try {
+      const q = searchQuery || selectedJob?.title || 'engineer'
+      const jobParam = selectedJob?.id ? `&jobId=${selectedJob.id}` : ''
+      const res = await fetch(`/api/portals/internal-search?query=${encodeURIComponent(q)}${jobParam}&limit=30`)
+      const data = await res.json()
+      const fetchedProfiles: Profile[] = (data.profiles || []).map((p: any) => ({
+        ...p,
+        id:         p.id,
+        name:       p.name,
+        title:      p.title,
+        location:   p.location,
+        experience: p.experience,
+        skills:     p.skills || [],
+        source:     p.source || 'Internal DB',
+        matchScore: p.matchScore || 0,
+        summary:    p.summary || '',
+        email:      p.email || '',
+        phone:      p.phone || '',
+        education:  p.education || '',
+      }))
+      setProfiles(fetchedProfiles)
+      setProfileSource('live') // internal DB is always "live"
     } catch {
       setProfiles([])
     } finally {
@@ -331,6 +367,28 @@ export default function SourcingPage() {
       {/* ── TAB 2: AI Profile Sync ── */}
       {activeTab === 'profiles' && (
         <div>
+          {/* Source mode toggle */}
+          <div className="flex items-center gap-3 mb-4">
+            <span className="text-xs font-semibold text-gray-500 uppercase">Search Source:</span>
+            <div className="flex bg-gray-100 rounded-xl p-1 gap-1">
+              <button
+                onClick={() => { setSourceMode('external'); setProfiles([]); setProfileSource(null); setBulkSaveStatus(null) }}
+                className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold transition ${sourceMode==='external' ? 'bg-white shadow text-red-700 border border-red-100' : 'text-gray-500 hover:text-gray-700'}`}>
+                <Zap size={12}/> AI Fetch (External Portals)
+              </button>
+              <button
+                onClick={() => { setSourceMode('internal'); setProfiles([]); setProfileSource(null); setBulkSaveStatus(null) }}
+                className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold transition ${sourceMode==='internal' ? 'bg-white shadow text-blue-700 border border-blue-100' : 'text-gray-500 hover:text-gray-700'}`}>
+                <Archive size={12}/> Internal DB (Past Applicants)
+              </button>
+            </div>
+            {sourceMode === 'internal' && (
+              <span className="text-xs text-blue-600 bg-blue-50 border border-blue-100 px-2.5 py-1 rounded-lg">
+                Searches your Candidates Master — past applicants, referrals, Resdex imports
+              </span>
+            )}
+          </div>
+
           {/* Search bar — pre-filled from selected job */}
           <div className="bg-white border border-gray-100 rounded-xl p-4 shadow-sm mb-5">
             {selectedJob && (
@@ -346,21 +404,36 @@ export default function SourcingPage() {
                   placeholder="e.g. ELV Engineer BMS CCTV"
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"/>
               </div>
-              <div className="w-44">
-                <label className="block text-xs font-semibold text-gray-600 mb-1.5">Location (optional)</label>
-                <input value={searchLocation} onChange={e => setSearchLocation(e.target.value)}
-                  placeholder={selectedJob?.location || 'e.g. Mumbai'}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"/>
-              </div>
-              <button onClick={fetchProfiles} disabled={loadingProfiles}
-                className="flex items-center gap-2 bg-red-700 hover:bg-red-800 text-white px-5 py-2 rounded-lg text-sm font-semibold transition disabled:opacity-60">
-                {loadingProfiles ? <RefreshCw size={15} className="animate-spin"/> : <Zap size={15}/>}
-                AI Fetch Profiles
-              </button>
+              {sourceMode === 'external' && (
+                <div className="w-44">
+                  <label className="block text-xs font-semibold text-gray-600 mb-1.5">Location (optional)</label>
+                  <input value={searchLocation} onChange={e => setSearchLocation(e.target.value)}
+                    placeholder={selectedJob?.location || 'e.g. Mumbai'}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"/>
+                </div>
+              )}
+              {sourceMode === 'external' ? (
+                <button onClick={fetchProfiles} disabled={loadingProfiles}
+                  className="flex items-center gap-2 bg-red-700 hover:bg-red-800 text-white px-5 py-2 rounded-lg text-sm font-semibold transition disabled:opacity-60">
+                  {loadingProfiles ? <RefreshCw size={15} className="animate-spin"/> : <Zap size={15}/>}
+                  AI Fetch Profiles
+                </button>
+              ) : (
+                <button onClick={fetchInternalProfiles} disabled={loadingProfiles}
+                  className="flex items-center gap-2 bg-blue-700 hover:bg-blue-800 text-white px-5 py-2 rounded-lg text-sm font-semibold transition disabled:opacity-60">
+                  {loadingProfiles ? <RefreshCw size={15} className="animate-spin"/> : <Database size={15}/>}
+                  Search Internal DB
+                </button>
+              )}
             </div>
-            {profileSource && (
+            {profileSource && sourceMode === 'external' && (
               <div className={`mt-2 text-xs font-medium ${profileSource==='live'?'text-green-600':'text-orange-500'}`}>
                 {profileSource==='live' ? '✓ Live profiles from JSearch API (LinkedIn + Indeed + Glassdoor)' : '⚡ Demo profiles — add RAPIDAPI_KEY to Vercel for live data'}
+              </div>
+            )}
+            {profileSource && sourceMode === 'internal' && profiles.length > 0 && (
+              <div className="mt-2 text-xs font-medium text-blue-600">
+                ✓ Showing {profiles.length} matches from your internal Candidates Master — ranked by skill relevance
               </div>
             )}
             {/* Auto-save status banner */}
@@ -412,7 +485,10 @@ export default function SourcingPage() {
                     </div>
                     <div className="flex items-center gap-2 text-xs">
                       <span className="flex items-center gap-1 text-gray-500"><MapPin size={10}/>{p.location}</span>
-                      <span className={`px-1.5 py-0.5 rounded font-medium ${p.source==='LinkedIn'?'bg-blue-100 text-blue-700':'bg-green-100 text-green-700'}`}>{p.source}</span>
+                      <span className={`px-1.5 py-0.5 rounded font-medium ${
+                        p.source==='LinkedIn' || p.source.includes('LinkedIn') ? 'bg-blue-100 text-blue-700' :
+                        p.source==='Internal DB' || p.source==='Referral' || p.source==='Resdex' ? 'bg-purple-100 text-purple-700' :
+                        'bg-green-100 text-green-700'}`}>{p.source}</span>
                       {synced[p.id] === 'done' && <span className="flex items-center gap-1 text-green-600 ml-auto"><Database size={11}/> Synced</span>}
                     </div>
                   </div>
@@ -431,7 +507,10 @@ export default function SourcingPage() {
                             <p className="text-sm text-gray-500">{selectedProfile.title} · {selectedProfile.experience}</p>
                             <div className="flex items-center gap-2 mt-1">
                               <span className="flex items-center gap-1 text-xs text-gray-500"><MapPin size={11}/>{selectedProfile.location}</span>
-                              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${selectedProfile.source==='LinkedIn'?'bg-blue-100 text-blue-700':'bg-green-100 text-green-700'}`}>{selectedProfile.source}</span>
+                              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                                selectedProfile.source==='LinkedIn' || selectedProfile.source.includes('LinkedIn') ? 'bg-blue-100 text-blue-700' :
+                                selectedProfile.source==='Internal DB' || selectedProfile.source==='Referral' || selectedProfile.source==='Resdex' ? 'bg-purple-100 text-purple-700' :
+                                'bg-green-100 text-green-700'}`}>{selectedProfile.source}</span>
                             </div>
                           </div>
                         </div>
@@ -473,7 +552,10 @@ export default function SourcingPage() {
                       <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 space-y-1.5 mb-2">
                         <div className="flex items-center gap-2 text-xs text-blue-700">
                           <CheckCircle size={13} className="text-blue-500 flex-shrink-0"/>
-                          <span><strong>Saved to Candidates Master</strong> — visible in Talent Pool for HR review.</span>
+                          {sourceMode === 'internal'
+                            ? <span><strong>Already in Candidates Master</strong> — sourced from {selectedProfile.source}.</span>
+                            : <span><strong>Saved to Candidates Master</strong> — visible in Talent Pool for HR review.</span>
+                          }
                         </div>
                         <div className="flex items-center gap-2 text-xs text-gray-500">
                           <Database size={13} className="flex-shrink-0"/>
@@ -506,12 +588,22 @@ export default function SourcingPage() {
 
           {profiles.length === 0 && !loadingProfiles && (
             <div className="bg-white border border-dashed border-gray-200 rounded-xl p-16 text-center">
-              <Zap size={40} className="mx-auto text-gray-300 mb-3"/>
-              <p className="text-gray-600 font-medium mb-1">AI Profile Sync Ready</p>
+              {sourceMode === 'external'
+                ? <Zap size={40} className="mx-auto text-gray-300 mb-3"/>
+                : <Archive size={40} className="mx-auto text-blue-200 mb-3"/>
+              }
+              <p className="text-gray-600 font-medium mb-1">
+                {sourceMode === 'external' ? 'AI Profile Sync Ready' : 'Internal DB Search Ready'}
+              </p>
               <p className="text-sm text-gray-400 max-w-sm mx-auto">
-                {selectedJob
-                  ? `Query pre-filled from "${selectedJob.title}" JD. Click "AI Fetch Profiles" to find matching candidates.`
-                  : 'Select a job first, or enter a role manually above.'}
+                {sourceMode === 'external'
+                  ? (selectedJob
+                      ? `Query pre-filled from "${selectedJob.title}" JD. Click "AI Fetch Profiles" to find matching candidates.`
+                      : 'Select a job first, or enter a role manually above.')
+                  : (selectedJob
+                      ? `Search your internal Candidates Master for "${selectedJob.title}" matches — past applicants, sourced profiles, and referrals.`
+                      : 'Select a job first, or enter skills manually to search past candidates.')
+                }
               </p>
             </div>
           )}
