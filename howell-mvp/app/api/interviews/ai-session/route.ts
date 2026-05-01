@@ -59,6 +59,9 @@ After all questions are answered, thank the candidate and end the interview prof
 Be warm, professional, and encouraging throughout.
         `.trim()
 
+        const appBaseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+        const webhookUrl = `${appBaseUrl}/api/interviews/tavus-webhook`
+
         const res = await fetch('https://tavusapi.com/v2/conversations', {
           method: 'POST',
           headers: {
@@ -66,15 +69,16 @@ Be warm, professional, and encouraging throughout.
             'x-api-key': tavusKey,
           },
           body: JSON.stringify({
-            replica_id:          personaId,
-            persona_id:          personaId,
-            conversation_name:   `${jobTitle} — ${candidateName} — AI Screening`,
+            replica_id:             personaId,
+            persona_id:             personaId,
+            conversation_name:      `${jobTitle} — ${candidateName} — AI Screening`,
             conversational_context: context,
+            callback_url:           webhookUrl,
             properties: {
-              max_call_duration:    3600,
+              max_call_duration:        3600,
               participant_left_timeout: 60,
-              enable_recording:    true,
-              enable_transcription: true,
+              enable_recording:         true,
+              enable_transcription:     true,
             },
           }),
         })

@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
-import { Calendar, Clock, Video, Users, Star, Bot, CheckCircle, XCircle, Zap, Settings, ExternalLink, RefreshCw, ChevronRight, AlertCircle } from 'lucide-react'
+import { Calendar, Clock, Video, Users, Star, Bot, CheckCircle, XCircle, Zap, Settings, ExternalLink, RefreshCw, ChevronRight, AlertCircle, Trophy, ThumbsUp, ThumbsDown, Minus } from 'lucide-react'
 import { formatDateTime } from '@/lib/utils'
 import type { Interview } from '@/types'
 import Link from 'next/link'
@@ -29,7 +29,7 @@ interface AISession {
   scheduled_at: string | null
   completed_at: string | null
   application: {
-    candidate: { full_name: string; email: string }
+    candidate: { full_name: string; email: string; current_title?: string }
     job: { title: string }
   }
   round: { name: string; round_number: number }
@@ -41,7 +41,7 @@ export default function InterviewsPage() {
   const [queue, setQueue]           = useState<QueueItem[]>([])
   const [aiSessions, setAISessions] = useState<AISession[]>([])
   const [loading, setLoading]       = useState(true)
-  const [tab, setTab]               = useState<'scheduled' | 'ai-queue' | 'ai-sessions'>('scheduled')
+  const [tab, setTab]               = useState<'scheduled' | 'ai-queue' | 'ai-sessions' | 'rankings'>('scheduled')
   const [approving, setApproving]   = useState<string | null>(null)
 
   const loadAll = useCallback(async () => {
@@ -86,7 +86,7 @@ export default function InterviewsPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Interviews</h1>
           <p className="text-gray-500 text-sm mt-1">
-            {upcoming.length} upcoming · {completed.length} completed · {queue.length} awaiting approval
+            {upcoming.length} upcoming · {completed.length} completed · {queue.length} awaiting approval · {aiSessions.filter(s => s.status === 'completed' && s.ai_score !== null).length} scored
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -108,6 +108,7 @@ export default function InterviewsPage() {
           { key: 'scheduled',   label: 'Manual Interviews', count: upcoming.length + completed.length },
           { key: 'ai-queue',    label: 'AI Approval Queue', count: queue.length, highlight: queue.length > 0 },
           { key: 'ai-sessions', label: 'AI Sessions',       count: aiSessions.length },
+          { key: 'rankings',    label: '🏆 Rankings',       count: aiSessions.filter(s => s.status === 'completed' && s.ai_score !== null).length },
         ].map(t => (
           <button
             key={t.key}
@@ -201,6 +202,11 @@ export default function InterviewsPage() {
                 aiSessions.map(s => <AISessionCard key={s.id} session={s} />)
               )}
             </div>
+          )}
+
+          {/* Rankings Tab */}
+          {tab === 'rankings' && (
+            <RankingsView sessions={aiSessions} />
           )}
         </>
       )}
@@ -324,6 +330,158 @@ function QueueCard({ item, approving, onApprove, onReject }: {
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+/* ── Rankings View ────────────────────────────────────────────────────────── */
+function RankingsView({ sessions }: { sessions: AISession[] }) {
+  const scored = sessions.filter(s => s.status === 'completed' && s.ai_score !== null)
+
+  if (scored.length === 0) {
+    return (
+      <div className="text-center py-16 text-gray-400 text-sm">
+        <Trophy size={32} className="mx-auto mb-3 text-gray-300" />
+        <p>No scored interviews yet.</p>
+        <p className="text-xs mt-1">Rankings appear once AI interview sessions are completed and scored.</p>
+      </div>
+    )
+  }
+
+  // Group by job title
+  const byJob: Record<string, AISession[]> = {}
+  for (const s of scored) {
+    const title = s.application?.job?.title || 'Unknown Role'
+    if (!byJob[title]) byJob[title] = []
+    byJob[title].push(s)
+  }
+
+  // Sort each group by ai_score descending
+  for (const title of Object.keys(byJob)) {
+    byJob[title].sort((a, b) => (b.ai_score || 0) - (a.ai_score || 0))
+  }
+
+  return (
+    <div className="space-y-8">
+      {/* Summary bar */}
+      <div className="flex items-center gap-4 bg-violet-50 border border-violet-100 rounded-xl px-5 py-3">
+        <Trophy size={18} className="text-violet-600 flex-shrink-0" />
+        <p className="text-sm text-violet-700 font-medium">
+          {scored.length} candidate{scored.length !== 1 ? 's' : ''} ranked across {Object.keys(byJob).length} role{Object.keys(byJob).length !== 1 ? 's' : ''}
+        </p>
+        <span className="ml-auto text-xs text-violet-500">Sorted by AI interview score · highest first</span>
+      </div>
+
+      {Object.entries(byJob).map(([jobTitle, sessions]) => (
+        <section key={jobTitle}>
+          <h2 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
+            <span className="bg-gray-200 text-gray-600 text-xs px-2 py-0.5 rounded-full">{sessions.length}</span>
+            {jobTitle}
+          </h2>
+          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50 text-xs text-gray-500 font-semibold uppercase tracking-wide border-b border-gray-100">
+                  <th className="px-4 py-3 text-left w-8">#</th>
+                  <th className="px-4 py-3 text-left">Candidate</th>
+                  <th className="px-4 py-3 text-left">Round</th>
+                  <th className="px-4 py-3 text-center">Score</th>
+                  <th className="px-4 py-3 text-center">Result</th>
+                  <th className="px-4 py-3 text-left">Completed</th>
+                  <th className="px-4 py-3 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {sessions.map((s, idx) => {
+                  const score = s.ai_score || 0
+                  const scoreColor = score >= 75 ? 'text-green-600' : score >= 55 ? 'text-amber-600' : 'text-red-500'
+                  const barColor   = score >= 75 ? 'bg-green-500' : score >= 55 ? 'bg-amber-400' : 'bg-red-400'
+                  const rankBadge  = idx === 0
+                    ? 'bg-amber-400 text-white'
+                    : idx === 1
+                    ? 'bg-gray-300 text-gray-700'
+                    : idx === 2
+                    ? 'bg-orange-300 text-white'
+                    : 'bg-gray-100 text-gray-500'
+
+                  return (
+                    <tr key={s.id} className={`hover:bg-gray-50 transition ${idx === 0 ? 'bg-amber-50/30' : ''}`}>
+                      {/* Rank */}
+                      <td className="px-4 py-3">
+                        <span className={`inline-flex w-6 h-6 rounded-full items-center justify-center text-[10px] font-black ${rankBadge}`}>
+                          {idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : idx + 1}
+                        </span>
+                      </td>
+
+                      {/* Candidate */}
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-7 h-7 rounded-full bg-red-100 text-red-700 flex items-center justify-center text-xs font-bold flex-shrink-0">
+                            {s.application?.candidate?.full_name?.charAt(0) || '?'}
+                          </div>
+                          <div>
+                            <div className="font-semibold text-gray-900 text-xs">{s.application?.candidate?.full_name}</div>
+                            <div className="text-[10px] text-gray-400">{s.application?.candidate?.email}</div>
+                          </div>
+                        </div>
+                      </td>
+
+                      {/* Round */}
+                      <td className="px-4 py-3">
+                        <span className="text-xs text-gray-500">{s.round?.name || 'AI Round'}</span>
+                      </td>
+
+                      {/* Score */}
+                      <td className="px-4 py-3 text-center">
+                        <div className={`text-lg font-black ${scoreColor}`}>{score}</div>
+                        <div className="w-16 h-1.5 bg-gray-100 rounded-full mx-auto mt-1 overflow-hidden">
+                          <div className={`h-full rounded-full ${barColor}`} style={{ width: `${score}%` }} />
+                        </div>
+                      </td>
+
+                      {/* Recommendation */}
+                      <td className="px-4 py-3 text-center">
+                        {s.recommendation === 'pass' ? (
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-700 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full">
+                            <ThumbsUp size={10}/> Pass
+                          </span>
+                        ) : s.recommendation === 'fail' ? (
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-700 bg-red-50 border border-red-200 px-2 py-0.5 rounded-full">
+                            <ThumbsDown size={10}/> Reject
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                            <Minus size={10}/> Borderline
+                          </span>
+                        )}
+                      </td>
+
+                      {/* Completed at */}
+                      <td className="px-4 py-3">
+                        <span className="text-xs text-gray-400">
+                          {s.completed_at
+                            ? new Date(s.completed_at).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })
+                            : '—'}
+                        </span>
+                      </td>
+
+                      {/* Action */}
+                      <td className="px-4 py-3 text-right">
+                        <Link
+                          href={`/interview/ai-room?sessionId=${s.id}`}
+                          className="text-xs text-violet-600 hover:text-violet-800 font-semibold flex items-center gap-1 justify-end"
+                        >
+                          View <ChevronRight size={12}/>
+                        </Link>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ))}
     </div>
   )
 }

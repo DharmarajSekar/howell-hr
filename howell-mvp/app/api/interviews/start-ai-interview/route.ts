@@ -206,6 +206,9 @@ ${questions.map((q: string, i: number) => `${i + 1}. ${q}`).join('\n')}
 After all questions, thank ${candidate.full_name} warmly and end the interview professionally.
 Be encouraging, professional, and make the candidate feel comfortable throughout.`.trim()
 
+        const appBaseUrl  = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+        const webhookUrl  = `${appBaseUrl}/api/interviews/tavus-webhook`
+
         const res = await fetch('https://tavusapi.com/v2/conversations', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-api-key': tavusKey },
@@ -214,6 +217,7 @@ Be encouraging, professional, and make the candidate feel comfortable throughout
             persona_id:             personaId,
             conversation_name:      `${job.title} — ${candidate.full_name} — ${round.name}`,
             conversational_context: context,
+            callback_url:           webhookUrl,
             properties: {
               max_call_duration:        3600,
               participant_left_timeout: 60,
