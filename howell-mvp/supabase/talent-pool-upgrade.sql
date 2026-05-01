@@ -14,5 +14,8 @@ ALTER TABLE candidates ADD COLUMN IF NOT EXISTS referred_by       TEXT;
 ALTER TABLE candidates ADD COLUMN IF NOT EXISTS referral_notes    TEXT;
 ALTER TABLE candidates ADD COLUMN IF NOT EXISTS referral_date     TIMESTAMPTZ;
 
+-- Add skills array to jobs table (used for AI matching and sourcing)
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS skills TEXT[] DEFAULT '{}';
+
 -- Reload PostgREST schema cache
 NOTIFY pgrst, 'reload schema';
