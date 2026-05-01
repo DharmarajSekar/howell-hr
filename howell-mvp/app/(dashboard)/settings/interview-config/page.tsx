@@ -3,7 +3,7 @@ import { useEffect, useState, useCallback } from 'react'
 import {
   Bot, Users, Plus, Trash2, Save, ChevronDown, ChevronUp,
   Settings, Zap, Clock, Target, Shield, HelpCircle, CheckCircle,
-  AlertCircle, GripVertical, Video
+  AlertCircle, GripVertical, Video, X, AlertTriangle
 } from 'lucide-react'
 
 interface Round {
@@ -65,6 +65,18 @@ export default function InterviewConfigPage() {
   const [autoSchedule, setAutoSchedule] = useState(false)
   const [pipelineName, setPipelineName] = useState('Standard Pipeline')
 
+  // Screening thresholds
+  const [shortlistThreshold, setShortlistThreshold] = useState(70)
+  const [rejectThreshold,    setRejectThreshold]    = useState(40)
+
+  // Knockout questions
+  const [knockouts,       setKnockouts]       = useState<any[]>([])
+  const [knockoutLoading, setKnockoutLoading] = useState(false)
+  const [newKnockout, setNewKnockout] = useState({
+    question: '', question_type: 'yes_no', pass_answer: 'yes',
+    reject_message: 'You do not meet the minimum requirements for this role.',
+  })
+
   // Load jobs on mount
   useEffect(() => {
     fetch('/api/jobs').then(r => r.json()).then(d => {
@@ -85,6 +97,8 @@ export default function InterviewConfigPage() {
         setConfig(data.config)
         setPipelineName(data.config.name || 'Standard Pipeline')
         setAutoSchedule(data.config.auto_schedule_enabled || false)
+        setShortlistThreshold(data.config.auto_shortlist_threshold ?? 70)
+        setRejectThreshold(data.config.auto_reject_below ?? 40)
         setRounds((data.rounds || []).map((r: any) => ({
           ...r,
           ai_questions: r.ai_questions || [],
@@ -172,6 +186,8 @@ export default function InterviewConfigPage() {
           jobId: selectedJob,
           name: pipelineName,
           auto_schedule_enabled: autoSchedule,
+          auto_shortlist_threshold: shortlistThreshold,
+          auto_reject_below: rejectThreshold,
           rounds,
         }),
       })
@@ -184,6 +200,39 @@ export default function InterviewConfigPage() {
     } finally {
       setSaving(false)
     }
+  }
+
+  // Load knockout questions when job changes
+  const loadKnockouts = useCallback(async (jobId: string) => {
+    if (!jobId) return
+    setKnockoutLoading(true)
+    const res  = await fetch(`/api/screening/knockout-config?jobId=${jobId}`)
+    const data = await res.json()
+    setKnockouts(data.questions || [])
+    setKnockoutLoading(false)
+  }, [])
+
+  useEffect(() => {
+    if (selectedJob) loadKnockouts(selectedJob)
+  }, [selectedJob, loadKnockouts])
+
+  async function addKnockout() {
+    if (!newKnockout.question.trim() || !selectedJob) return
+    const res  = await fetch('/api/screening/knockout-config', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ ...newKnockout, job_id: selectedJob, sort_order: knockouts.length }),
+    })
+    const data = await res.json()
+    if (data.question) {
+      setKnockouts(prev => [...prev, data.question])
+      setNewKnockout({ question: '', question_type: 'yes_no', pass_answer: 'yes', reject_message: 'You do not meet the minimum requirements for this role.' })
+    }
+  }
+
+  async function deleteKnockout(id: string) {
+    await fetch(`/api/screening/knockout-config?id=${id}`, { method: 'DELETE' })
+    setKnockouts(prev => prev.filter(q => q.id !== id))
   }
 
   const selectedJobObj = jobs.find(j => j.id === selectedJob)
@@ -293,6 +342,130 @@ export default function InterviewConfigPage() {
               <div className="text-center py-10 border-2 border-dashed border-gray-200 rounded-xl text-gray-400 text-sm">
                 No rounds configured yet. Click "Add Round" to get started.
               </div>
+            )}
+          </div>
+
+          {/* ── Screening Thresholds ────────────────────────── */}
+          <div className="bg-white border border-gray-200 rounded-xl p-5 mb-4 shadow-sm">
+            <div className="flex items-center gap-2 mb-4">
+              <Target size={16} className="text-red-600"/>
+              <h2 className="font-semibold text-gray-900 text-sm">AI Screening Thresholds</h2>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-green-50 border border-green-200 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <CheckCircle size={14} className="text-green-600"/>
+                  <span className="text-xs font-bold text-green-700">Auto-Shortlist Above</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input type="range" min={50} max={95} step={5} value={shortlistThreshold}
+                    onChange={e => setShortlistThreshold(Number(e.target.value))}
+                    className="flex-1 accent-green-600"/>
+                  <span className="text-lg font-black text-green-700 w-12 text-right">{shortlistThreshold}%</span>
+                </div>
+                <p className="text-xs text-green-600 mt-1">Candidates scoring ≥ {shortlistThreshold}% are automatically shortlisted</p>
+              </div>
+              <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <AlertCircle size={14} className="text-red-600"/>
+                  <span className="text-xs font-bold text-red-700">Auto-Reject Below</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input type="range" min={10} max={60} step={5} value={rejectThreshold}
+                    onChange={e => setRejectThreshold(Number(e.target.value))}
+                    className="flex-1 accent-red-600"/>
+                  <span className="text-lg font-black text-red-700 w-12 text-right">{rejectThreshold}%</span>
+                </div>
+                <p className="text-xs text-red-600 mt-1">Candidates scoring &lt; {rejectThreshold}% are automatically rejected</p>
+              </div>
+            </div>
+            <div className="mt-3 bg-gray-50 rounded-xl px-4 py-2.5 text-xs text-gray-500">
+              Scores between <strong>{rejectThreshold}%</strong> and <strong>{shortlistThreshold}%</strong> go to <strong>Manual Review</strong> queue for HR decision
+            </div>
+          </div>
+
+          {/* ── Knockout Questions ───────────────────────────── */}
+          <div className="bg-white border border-gray-200 rounded-xl p-5 mb-4 shadow-sm">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <AlertTriangle size={16} className="text-amber-500"/>
+                <h2 className="font-semibold text-gray-900 text-sm">Knockout Questions</h2>
+              </div>
+              <span className="text-xs text-amber-600 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-lg font-medium">
+                Candidates who fail any of these are auto-rejected immediately
+              </span>
+            </div>
+
+            {knockoutLoading ? (
+              <div className="text-center py-6 text-gray-400 text-xs">Loading…</div>
+            ) : (
+              <>
+                {knockouts.length === 0 && (
+                  <div className="text-center py-6 border-2 border-dashed border-gray-200 rounded-xl text-gray-400 text-sm mb-4">
+                    No knockout questions set. Add one below.
+                  </div>
+                )}
+                <div className="space-y-2 mb-4">
+                  {knockouts.map((kq: any) => (
+                    <div key={kq.id} className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl p-3">
+                      <AlertTriangle size={13} className="text-amber-500 flex-shrink-0 mt-0.5"/>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium text-gray-800">{kq.question}</div>
+                        <div className="text-xs text-gray-500 mt-0.5">
+                          Type: <strong>{kq.question_type}</strong> · Required answer: <strong>{kq.pass_answer}</strong>
+                        </div>
+                        <div className="text-xs text-red-600 mt-0.5 italic">Reject message: "{kq.reject_message}"</div>
+                      </div>
+                      <button onClick={() => deleteKnockout(kq.id)}
+                        className="text-gray-400 hover:text-red-500 transition flex-shrink-0">
+                        <X size={14}/>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Add new knockout question form */}
+                <div className="border border-dashed border-gray-300 rounded-xl p-4 space-y-3">
+                  <div className="text-xs font-semibold text-gray-500 uppercase">Add Knockout Question</div>
+                  <input
+                    value={newKnockout.question}
+                    onChange={e => setNewKnockout(n => ({...n, question: e.target.value}))}
+                    placeholder="e.g. Do you have a valid UAE driving licence? / Minimum years of experience required?"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"/>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">Question Type</label>
+                      <select value={newKnockout.question_type}
+                        onChange={e => setNewKnockout(n => ({...n, question_type: e.target.value, pass_answer: e.target.value === 'yes_no' ? 'yes' : ''}))}
+                        className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500">
+                        <option value="yes_no">Yes / No</option>
+                        <option value="min_value">Minimum Value (experience, salary)</option>
+                        <option value="multiple_choice">Multiple Choice</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">
+                        {newKnockout.question_type === 'yes_no' ? 'Required Answer' : newKnockout.question_type === 'min_value' ? 'Minimum Value' : 'Accepted Answer'}
+                      </label>
+                      <input
+                        value={newKnockout.pass_answer}
+                        onChange={e => setNewKnockout(n => ({...n, pass_answer: e.target.value}))}
+                        placeholder={newKnockout.question_type === 'yes_no' ? 'yes or no' : newKnockout.question_type === 'min_value' ? 'e.g. 5' : 'accepted answer'}
+                        className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"/>
+                    </div>
+                  </div>
+                  <input
+                    value={newKnockout.reject_message}
+                    onChange={e => setNewKnockout(n => ({...n, reject_message: e.target.value}))}
+                    placeholder="Rejection message shown to candidate…"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"/>
+                  <button onClick={addKnockout}
+                    disabled={!newKnockout.question.trim()}
+                    className="flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-lg text-xs font-bold transition disabled:opacity-50">
+                    <Plus size={13}/> Add Knockout Question
+                  </button>
+                </div>
+              </>
             )}
           </div>
 
