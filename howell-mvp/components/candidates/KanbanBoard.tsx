@@ -46,41 +46,18 @@ function AddCandidateModal({ onClose, onAdded }: { onClose: () => void; onAdded:
     setSaving(true)
     setError(null)
     try {
-      // Step 1: Create or upsert the candidate
-      const candidatePayload = {
-        full_name:          form.full_name,
-        email:              form.email,
-        phone:              form.phone,
-        current_title:      form.current_title,
-        current_company:    form.current_company,
-        experience_years:   form.experience_years   ? parseInt(form.experience_years)   : null,
-        location:           form.location,
-        salary_expectation: form.salary_expectation ? parseInt(form.salary_expectation) : null,
-        skills:             form.skills ? form.skills.split(',').map(s => s.trim()).filter(Boolean) : [],
-        summary:            form.summary,
-        source:             'direct',
-      }
-      const cRes  = await fetch('/api/candidates', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(candidatePayload),
-      })
-      const candidate = await cRes.json()
-      if (!cRes.ok) { setError(candidate.error || 'Failed to create candidate'); return }
-
-      // Step 2: Create an application linking candidate → job
-      const appRes = await fetch('/api/applications', {
+      // Single atomic call — creates candidate + application together
+      const res  = await fetch('/api/candidates/add-to-pipeline', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
-          candidate_id: candidate.id,
-          job_id:       form.job_id,
-          status:       'applied',
-          source:       'direct',
+          ...form,
+          skills: form.skills ? form.skills.split(',').map(s => s.trim()).filter(Boolean) : [],
         }),
       })
-      const app = await appRes.json()
-      if (!appRes.ok) { setError(app.error || 'Candidate saved but failed to create application'); return }
+      const data = await res.json()
+      if (!res.ok) { setError(data.error || 'Failed to add candidate'); return }
+      if (data.alreadyApplied) { setError('This candidate already has an application for the selected job'); return }
 
       onAdded()
       onClose()
