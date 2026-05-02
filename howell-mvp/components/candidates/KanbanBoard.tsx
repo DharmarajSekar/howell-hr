@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import type { Application } from '@/types'
@@ -28,12 +28,12 @@ function AddCandidateModal({ onClose, onAdded }: { onClose: () => void; onAdded:
   })
 
   // Load jobs for the dropdown
-  useState(() => {
+  useEffect(() => {
     fetch('/api/jobs').then(r => r.json()).then(data => {
       const list = Array.isArray(data) ? data : (data.jobs || [])
       setJobs(list)
     }).catch(() => {})
-  })
+  }, [])
 
   function set(field: string, value: string) {
     setForm(f => ({ ...f, [field]: value }))
@@ -307,7 +307,7 @@ export default function KanbanBoard({ applications }: Props) {
       {showAddModal && (
         <AddCandidateModal
           onClose={() => setShowAddModal(false)}
-          onAdded={() => router.refresh()}
+          onAdded={() => { setShowAddModal(false); window.location.reload() }}
         />
       )}
 
