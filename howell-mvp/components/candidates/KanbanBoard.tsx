@@ -55,14 +55,26 @@ function AddCandidateModal({ onClose, onAdded }: { onClose: () => void; onAdded:
           skills: form.skills ? form.skills.split(',').map(s => s.trim()).filter(Boolean) : [],
         }),
       })
-      const data = await res.json()
-      if (!res.ok) { setError(data.error || 'Failed to add candidate'); return }
-      if (data.alreadyApplied) { setError('This candidate already has an application for the selected job'); return }
+
+      let data: any = {}
+      try { data = await res.json() } catch { data = {} }
+
+      if (!res.ok) {
+        setError(`Error ${res.status}: ${data.error || data.message || 'Failed to add candidate. Check Vercel logs for details.'}`)
+        return
+      }
+      if (data.alreadyApplied) {
+        setError('This candidate already has an application for the selected job. They are already on the pipeline.')
+        return
+      }
+      if (!data.candidate?.id || !data.application?.id) {
+        setError(`Unexpected response from server — candidate or application may not have been saved. Response: ${JSON.stringify(data)}`)
+        return
+      }
 
       onAdded()
-      onClose()
     } catch (err: any) {
-      setError(err.message)
+      setError(`Network error: ${err.message} — check your internet connection and try again`)
     } finally {
       setSaving(false)
     }
