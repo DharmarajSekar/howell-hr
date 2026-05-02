@@ -10,9 +10,16 @@ export function middleware(request: NextRequest) {
   const isApiPortal       = pathname.startsWith('/api/portals')
   const isApiJobs         = pathname === '/api/jobs' && request.method === 'GET'
   const isApiTalentPool   = pathname === '/api/talent-pool-data' && request.method === 'GET'
+  const isApiDebug        = pathname.startsWith('/api/debug')
+  const isApiInternal     = pathname.startsWith('/api/candidates') ||
+                            pathname.startsWith('/api/applications') ||
+                            pathname.startsWith('/api/screening') ||
+                            pathname.startsWith('/api/interviews') ||
+                            pathname.startsWith('/api/ai') ||
+                            pathname.startsWith('/api/cron')
   const session           = request.cookies.get('howell-session')?.value
 
-  if (!isPublic && !isApiAuth && !isApiPortal && !isApiJobs && !isApiTalentPool && session !== 'authenticated') {
+  if (!isPublic && !isApiAuth && !isApiPortal && !isApiJobs && !isApiTalentPool && !isApiDebug && !isApiInternal && session !== 'authenticated') {
     return NextResponse.redirect(new URL('/login', request.url))
   }
   if (pathname === '/' && session === 'authenticated') {
