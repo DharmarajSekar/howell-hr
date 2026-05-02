@@ -4,9 +4,175 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import type { Application } from '@/types'
 import { PIPELINE_STAGES, STATUS_LABELS } from '@/lib/utils'
-import { Bot, Loader2, Video, EyeOff, Eye } from 'lucide-react'
+import { Bot, Loader2, Video, EyeOff, Eye, UserPlus, X } from 'lucide-react'
 
 interface Props { applications: Application[] }
+
+/* ── Add Candidate Modal ──────────────────────────────────────────────────── */
+function AddCandidateModal({ onClose, onAdded }: { onClose: () => void; onAdded: () => void }) {
+  const [saving, setSaving] = useState(false)
+  const [error,  setError]  = useState<string | null>(null)
+  const [form, setForm] = useState({
+    full_name:          '',
+    email:              '',
+    phone:              '',
+    current_title:      '',
+    current_company:    '',
+    experience_years:   '',
+    location:           '',
+    salary_expectation: '',
+    skills:             '',
+    summary:            '',
+  })
+
+  function set(field: string, value: string) {
+    setForm(f => ({ ...f, [field]: value }))
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!form.full_name || !form.email) { setError('Name and Email are required'); return }
+    setSaving(true)
+    setError(null)
+    try {
+      const payload = {
+        ...form,
+        experience_years:   form.experience_years   ? parseInt(form.experience_years)   : null,
+        salary_expectation: form.salary_expectation ? parseInt(form.salary_expectation) : null,
+        skills: form.skills ? form.skills.split(',').map(s => s.trim()).filter(Boolean) : [],
+        source: 'direct',
+      }
+      const res  = await fetch('/api/candidates', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(payload),
+      })
+      const data = await res.json()
+      if (!res.ok) { setError(data.error || 'Failed to save'); return }
+      onAdded()
+      onClose()
+    } catch (err: any) {
+      setError(err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <div className="flex items-center gap-2">
+            <UserPlus size={18} className="text-red-600" />
+            <h2 className="text-lg font-bold text-gray-900">Add Candidate</h2>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg transition">
+            <X size={16} className="text-gray-500" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg px-3 py-2">{error}</div>
+          )}
+
+          {/* Row 1 */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Full Name <span className="text-red-500">*</span></label>
+              <input value={form.full_name} onChange={e => set('full_name', e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-red-400"
+                placeholder="e.g. Rahul Sharma" required />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Email <span className="text-red-500">*</span></label>
+              <input type="email" value={form.email} onChange={e => set('email', e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-red-400"
+                placeholder="rahul@email.com" required />
+            </div>
+          </div>
+
+          {/* Row 2 */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Phone</label>
+              <input value={form.phone} onChange={e => set('phone', e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-red-400"
+                placeholder="+91 98765 43210" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Location</label>
+              <input value={form.location} onChange={e => set('location', e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-red-400"
+                placeholder="Chennai, India" />
+            </div>
+          </div>
+
+          {/* Row 3 */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Current Title</label>
+              <input value={form.current_title} onChange={e => set('current_title', e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-red-400"
+                placeholder="Senior ELV Engineer" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Current Company</label>
+              <input value={form.current_company} onChange={e => set('current_company', e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-red-400"
+                placeholder="Acme Corp" />
+            </div>
+          </div>
+
+          {/* Row 4 */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Years of Experience</label>
+              <input type="number" min={0} max={50} value={form.experience_years} onChange={e => set('experience_years', e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-red-400"
+                placeholder="5" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Expected Salary (₹/yr)</label>
+              <input type="number" value={form.salary_expectation} onChange={e => set('salary_expectation', e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-red-400"
+                placeholder="800000" />
+            </div>
+          </div>
+
+          {/* Skills */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Skills <span className="text-gray-400 font-normal">(comma separated)</span></label>
+            <input value={form.skills} onChange={e => set('skills', e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-red-400"
+              placeholder="CCTV, Access Control, BMS, Fire Alarm" />
+          </div>
+
+          {/* Summary */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Summary / Notes</label>
+            <textarea value={form.summary} onChange={e => set('summary', e.target.value)} rows={3}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-red-400 resize-none"
+              placeholder="Brief background or notes about this candidate…" />
+          </div>
+
+          {/* Actions */}
+          <div className="flex items-center justify-end gap-3 pt-2 border-t border-gray-100">
+            <button type="button" onClick={onClose}
+              className="text-sm text-gray-500 px-4 py-2 rounded-lg hover:bg-gray-50 transition">
+              Cancel
+            </button>
+            <button type="submit" disabled={saving}
+              className="flex items-center gap-2 text-sm bg-red-600 text-white px-5 py-2 rounded-lg hover:bg-red-700 disabled:opacity-60 transition font-semibold">
+              {saving ? <><Loader2 size={14} className="animate-spin"/> Saving…</> : <><UserPlus size={14}/> Add Candidate</>}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
 
 const STAGE_COLORS: Record<string, string> = {
   applied:              'bg-gray-50  border-gray-200',
@@ -72,7 +238,9 @@ function anonymousLabel(id: string): string {
 }
 
 export default function KanbanBoard({ applications }: Props) {
-  const [blindMode, setBlindMode] = useState(false)
+  const router   = useRouter()
+  const [blindMode,   setBlindMode]   = useState(false)
+  const [showAddModal, setShowAddModal] = useState(false)
 
   const byStage = PIPELINE_STAGES.reduce((acc, stage) => {
     acc[stage] = applications
@@ -83,7 +251,15 @@ export default function KanbanBoard({ applications }: Props) {
 
   return (
     <div>
-      {/* Blind Mode Toggle */}
+      {/* Add Candidate Modal */}
+      {showAddModal && (
+        <AddCandidateModal
+          onClose={() => setShowAddModal(false)}
+          onAdded={() => router.refresh()}
+        />
+      )}
+
+      {/* Toolbar */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
           {blindMode && (
@@ -92,15 +268,22 @@ export default function KanbanBoard({ applications }: Props) {
             </div>
           )}
         </div>
-        <button
-          onClick={() => setBlindMode(b => !b)}
-          className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border transition ${
-            blindMode
-              ? 'bg-blue-600 text-white border-blue-600 hover:bg-blue-700'
-              : 'bg-white text-gray-600 border-gray-200 hover:border-blue-400 hover:text-blue-600'
-          }`}>
-          {blindMode ? <><Eye size={12}/> Reveal Names</> : <><EyeOff size={12}/> Blind Mode</>}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border bg-red-600 text-white border-red-600 hover:bg-red-700 transition">
+            <UserPlus size={12}/> Add Candidate
+          </button>
+          <button
+            onClick={() => setBlindMode(b => !b)}
+            className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border transition ${
+              blindMode
+                ? 'bg-blue-600 text-white border-blue-600 hover:bg-blue-700'
+                : 'bg-white text-gray-600 border-gray-200 hover:border-blue-400 hover:text-blue-600'
+            }`}>
+            {blindMode ? <><Eye size={12}/> Reveal Names</> : <><EyeOff size={12}/> Blind Mode</>}
+          </button>
+        </div>
       </div>
 
       <div className="flex gap-3 overflow-x-auto pb-4">
