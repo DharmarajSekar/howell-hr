@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import type { Application } from '@/types'
 import { PIPELINE_STAGES, STATUS_LABELS } from '@/lib/utils'
 import { Bot, Loader2, Video, EyeOff, Eye, UserPlus, X } from 'lucide-react'
+import { addCandidateAction } from '@/app/actions/addCandidate'
 
 interface Props { applications: Application[] }
 
@@ -46,35 +47,20 @@ function AddCandidateModal({ onClose, onAdded }: { onClose: () => void; onAdded:
     setSaving(true)
     setError(null)
     try {
-      // Single atomic call — creates candidate + application together
-      const res  = await fetch('/api/candidates/add-to-pipeline', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          ...form,
-          skills: form.skills ? form.skills.split(',').map(s => s.trim()).filter(Boolean) : [],
-        }),
+      // Direct server action — no API fetch, no middleware, no network issues
+      const result = await addCandidateAction({
+        ...form,
+        skills: form.skills ? form.skills.split(',').map(s => s.trim()).filter(Boolean) : [],
       })
 
-      let data: any = {}
-      try { data = await res.json() } catch { data = {} }
-
-      if (!res.ok) {
-        setError(`Error ${res.status}: ${data.error || data.message || 'Failed to add candidate. Check Vercel logs for details.'}`)
-        return
-      }
-      if (data.alreadyApplied) {
-        setError('This candidate already has an application for the selected job. They are already on the pipeline.')
-        return
-      }
-      if (!data.candidate?.id || !data.application?.id) {
-        setError(`Unexpected response from server — candidate or application may not have been saved. Response: ${JSON.stringify(data)}`)
+      if (result.error) {
+        setError(result.error)
         return
       }
 
       onAdded()
     } catch (err: any) {
-      setError(`Network error: ${err.message} — check your internet connection and try again`)
+      setError(`Unexpected error: ${err.message}`)
     } finally {
       setSaving(false)
     }
