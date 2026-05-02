@@ -12,6 +12,7 @@ interface Props { applications: Application[] }
 function AddCandidateModal({ onClose, onAdded }: { onClose: () => void; onAdded: () => void }) {
   const [saving, setSaving] = useState(false)
   const [error,  setError]  = useState<string | null>(null)
+  const [jobs,   setJobs]   = useState<{ id: string; title: string }[]>([])
   const [form, setForm] = useState({
     full_name:          '',
     email:              '',
@@ -23,6 +24,15 @@ function AddCandidateModal({ onClose, onAdded }: { onClose: () => void; onAdded:
     salary_expectation: '',
     skills:             '',
     summary:            '',
+    job_id:             '',   // which job they're applying for
+  })
+
+  // Load jobs for the dropdown
+  useState(() => {
+    fetch('/api/jobs').then(r => r.json()).then(data => {
+      const list = Array.isArray(data) ? data : (data.jobs || [])
+      setJobs(list)
+    }).catch(() => {})
   })
 
   function set(field: string, value: string) {
@@ -32,23 +42,46 @@ function AddCandidateModal({ onClose, onAdded }: { onClose: () => void; onAdded:
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!form.full_name || !form.email) { setError('Name and Email are required'); return }
+    if (!form.job_id) { setError('Please select a job to apply for — this is needed to show the candidate on the pipeline board'); return }
     setSaving(true)
     setError(null)
     try {
-      const payload = {
-        ...form,
+      // Step 1: Create or upsert the candidate
+      const candidatePayload = {
+        full_name:          form.full_name,
+        email:              form.email,
+        phone:              form.phone,
+        current_title:      form.current_title,
+        current_company:    form.current_company,
         experience_years:   form.experience_years   ? parseInt(form.experience_years)   : null,
+        location:           form.location,
         salary_expectation: form.salary_expectation ? parseInt(form.salary_expectation) : null,
-        skills: form.skills ? form.skills.split(',').map(s => s.trim()).filter(Boolean) : [],
-        source: 'direct',
+        skills:             form.skills ? form.skills.split(',').map(s => s.trim()).filter(Boolean) : [],
+        summary:            form.summary,
+        source:             'direct',
       }
-      const res  = await fetch('/api/candidates', {
+      const cRes  = await fetch('/api/candidates', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(payload),
+        body:    JSON.stringify(candidatePayload),
       })
-      const data = await res.json()
-      if (!res.ok) { setError(data.error || 'Failed to save'); return }
+      const candidate = await cRes.json()
+      if (!cRes.ok) { setError(candidate.error || 'Failed to create candidate'); return }
+
+      // Step 2: Create an application linking candidate → job
+      const appRes = await fetch('/api/applications', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          candidate_id: candidate.id,
+          job_id:       form.job_id,
+          status:       'applied',
+          source:       'direct',
+        }),
+      })
+      const app = await appRes.json()
+      if (!appRes.ok) { setError(app.error || 'Candidate saved but failed to create application'); return }
+
       onAdded()
       onClose()
     } catch (err: any) {
@@ -76,6 +109,25 @@ function AddCandidateModal({ onClose, onAdded }: { onClose: () => void; onAdded:
           {error && (
             <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg px-3 py-2">{error}</div>
           )}
+
+          {/* Job selector — required to appear on pipeline */}
+          <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
+            <label className="block text-xs font-semibold text-amber-800 mb-1.5">
+              Applying for Job <span className="text-red-500">*</span>
+              <span className="font-normal text-amber-600 ml-1">— required to appear on the pipeline board</span>
+            </label>
+            <select
+              value={form.job_id}
+              onChange={e => set('job_id', e.target.value)}
+              className="w-full border border-amber-200 bg-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-red-400"
+              required
+            >
+              <option value="">Select a job posting…</option>
+              {jobs.map(j => (
+                <option key={j.id} value={j.id}>{j.title}</option>
+              ))}
+            </select>
+          </div>
 
           {/* Row 1 */}
           <div className="grid grid-cols-2 gap-4">
