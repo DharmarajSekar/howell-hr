@@ -2,22 +2,12 @@ export const dynamic = 'force-dynamic'
 import { db } from '@/lib/db'
 import KanbanBoard from '@/components/candidates/KanbanBoard'
 
-/**
- * Pipeline logic:
- * - Show ONLY genuine pipeline entries
- * - Self-applied candidates (source != portal_sync) → show at all stages
- * - Portal-sourced candidates → only show once HR has moved them past 'applied'
- *   (i.e., status is shortlisted, screening, interview_scheduled, etc.)
- * - This keeps the pipeline clean from auto-fetched portal profiles
- */
 function isPipelineEntry(app: any): boolean {
-  const source  = (app.candidate?.source || '').toLowerCase()
-  const status  = app.status || ''
+  const source   = (app.candidate?.source || '').toLowerCase()
+  const status   = app.status || ''
   const isPortal = source.includes('portal_sync') || source.includes('portal sync')
-
   // Portal candidates only appear once HR has actively worked with them
   if (isPortal && status === 'applied') return false
-
   return true
 }
 
@@ -27,10 +17,11 @@ export default async function CandidatesPage() {
     db.jobs.all(),
   ])
 
-  // Filter to genuine pipeline entries only
-  const applications = allApplications.filter(isPipelineEntry)
-
-  const portalPending = allApplications.length - applications.length
+  // Split: active pipeline vs rejected
+  const rejected    = allApplications.filter(a => a.status === 'rejected')
+  const nonRejected = allApplications.filter(a => a.status !== 'rejected')
+  const applications = nonRejected.filter(isPipelineEntry)
+  const portalPending = nonRejected.length - applications.length
 
   return (
     <div className="p-8">
@@ -38,7 +29,7 @@ export default async function CandidatesPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Candidate Pipeline</h1>
           <p className="text-gray-500 text-sm mt-1">
-            {applications.length} active application{applications.length !== 1 ? 's' : ''} across {jobs.length} role{jobs.length !== 1 ? 's' : ''}
+            {applications.length} active · {rejected.length} rejected · {jobs.length} role{jobs.length !== 1 ? 's' : ''}
           </p>
         </div>
         {portalPending > 0 && (
@@ -52,7 +43,7 @@ export default async function CandidatesPage() {
           </a>
         )}
       </div>
-      <KanbanBoard applications={applications} />
+      <KanbanBoard applications={applications} rejectedApplications={rejected} />
     </div>
   )
 }

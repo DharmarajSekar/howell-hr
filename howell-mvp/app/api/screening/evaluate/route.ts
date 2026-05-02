@@ -117,30 +117,35 @@ export async function POST(req: NextRequest) {
     const rejectThreshold    = pipelineConfig?.[0]?.auto_reject_below        ?? 40
 
     // ── 4. Determine overall result ────────────────────────
+    // Only act on score if AI scoring actually returned a meaningful result (> 0)
+    const scoringSucceeded = aiScore > 0
+
     let overallResult = 'review'
     let autoRejected  = false
     let rejectReason  = null as string | null
     let newStatus     = app.status  // don't change unless threshold met
 
     if (!knockoutPassed) {
+      // Knockout always wins — hard reject regardless of score
       overallResult = 'fail'
       autoRejected  = true
       rejectReason  = knockoutRejectMsg || `Failed knockout: ${knockoutFailedQ}`
       newStatus     = 'rejected'
-    } else if (scoreData.auto_reject) {
+    } else if (scoreData.auto_reject && scoringSucceeded) {
       overallResult = 'fail'
       autoRejected  = true
       rejectReason  = scoreData.reject_reason
       newStatus     = 'rejected'
-    } else if (aiScore >= shortlistThreshold) {
+    } else if (scoringSucceeded && aiScore >= shortlistThreshold) {
       overallResult = 'pass'
       newStatus     = 'shortlisted'
-    } else if (aiScore < rejectThreshold) {
+    } else if (scoringSucceeded && aiScore < rejectThreshold) {
       overallResult = 'fail'
       autoRejected  = true
       rejectReason  = `AI match score ${aiScore}% is below the minimum threshold of ${rejectThreshold}%`
       newStatus     = 'rejected'
     }
+    // If scoringSucceeded is false (score = 0), leave status unchanged and mark as 'review'
 
     // ── 5. Save screening results ──────────────────────────
     const screeningRecord = {

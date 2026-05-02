@@ -1,13 +1,16 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import type { Application } from '@/types'
 import { PIPELINE_STAGES, STATUS_LABELS } from '@/lib/utils'
-import { Bot, Loader2, Video, EyeOff, Eye, UserPlus, X } from 'lucide-react'
+import { Bot, Loader2, Video, EyeOff, Eye, UserPlus, X, XCircle, Calendar, ChevronDown, RotateCcw } from 'lucide-react'
 import { addCandidateAction } from '@/app/actions/addCandidate'
 
-interface Props { applications: Application[] }
+interface Props {
+  applications: Application[]
+  rejectedApplications?: Application[]
+}
 
 /* ── Add Candidate Modal ──────────────────────────────────────────────────── */
 function AddCandidateModal({ onClose, onAdded }: { onClose: () => void; onAdded: () => void }) {
@@ -223,8 +226,11 @@ const HEADER_COLORS: Record<string, string> = {
 
 const AI_INTERVIEW_STAGES = ['shortlisted', 'screening', 'applied']
 
-function ScorePill({ score }: { score?: number }) {
-  if (!score) return null
+function ScorePill({ score }: { score?: number | null }) {
+  if (score === null || score === undefined) {
+    return <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-400">AI…</span>
+  }
+  if (score === 0) return null
   const color = score >= 75 ? 'bg-green-100 text-green-700' : score >= 60 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'
   return <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${color}`}>{score}%</span>
 }
@@ -264,9 +270,191 @@ function anonymousLabel(id: string): string {
   return `Candidate #${hash}`
 }
 
-export default function KanbanBoard({ applications }: Props) {
+/* ── Rejected Tab View ───────────────────────────────────────────────────── */
+function RejectedView({ rejected }: { rejected: Application[] }) {
+  const [dateFrom,  setDateFrom]  = useState('')
+  const [dateTo,    setDateTo]    = useState('')
+  const [jobFilter, setJobFilter] = useState('all')
+  const [restoring, setRestoring] = useState<string | null>(null)
+
+  // Collect unique jobs from rejected list
+  const jobs = useMemo(() => {
+    const map: Record<string, string> = {}
+    rejected.forEach(a => { if (a.job?.id) map[a.job.id] = a.job.title })
+    return Object.entries(map).map(([id, title]) => ({ id, title }))
+  }, [rejected])
+
+  const filtered = useMemo(() => {
+    return rejected.filter(a => {
+      const updatedAt = new Date(a.updated_at || a.created_at || '')
+      if (dateFrom) {
+        const from = new Date(dateFrom)
+        from.setHours(0, 0, 0, 0)
+        if (updatedAt < from) return false
+      }
+      if (dateTo) {
+        const to = new Date(dateTo)
+        to.setHours(23, 59, 59, 999)
+        if (updatedAt > to) return false
+      }
+      if (jobFilter !== 'all' && a.job?.id !== jobFilter) return false
+      return true
+    }).sort((a, b) => new Date(b.updated_at || b.created_at || '').getTime() - new Date(a.updated_at || a.created_at || '').getTime())
+  }, [rejected, dateFrom, dateTo, jobFilter])
+
+  async function restoreToApplied(appId: string) {
+    setRestoring(appId)
+    try {
+      await fetch('/api/applications/restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ applicationId: appId }),
+      })
+      window.location.reload()
+    } finally {
+      setRestoring(null)
+    }
+  }
+
+  function setQuickFilter(preset: string) {
+    const now   = new Date()
+    const today = now.toISOString().split('T')[0]
+    if (preset === 'today') {
+      setDateFrom(today); setDateTo(today)
+    } else if (preset === 'week') {
+      const from = new Date(now); from.setDate(from.getDate() - 7)
+      setDateFrom(from.toISOString().split('T')[0]); setDateTo(today)
+    } else if (preset === 'month') {
+      const from = new Date(now); from.setDate(from.getDate() - 30)
+      setDateFrom(from.toISOString().split('T')[0]); setDateTo(today)
+    } else {
+      setDateFrom(''); setDateTo('')
+    }
+  }
+
+  return (
+    <div>
+      {/* Filters bar */}
+      <div className="flex flex-wrap items-center gap-3 mb-5 bg-red-50 border border-red-100 rounded-xl px-4 py-3">
+        <XCircle size={15} className="text-red-400 flex-shrink-0"/>
+        <span className="text-xs font-semibold text-red-700">{filtered.length} rejected profile{filtered.length !== 1 ? 's' : ''}</span>
+        <div className="flex items-center gap-1 ml-auto">
+          {/* Quick presets */}
+          {['today','week','month','all'].map(p => (
+            <button key={p} onClick={() => setQuickFilter(p)}
+              className="text-xs px-2.5 py-1 rounded-lg border border-red-200 text-red-600 hover:bg-red-100 transition capitalize font-medium">
+              {p === 'all' ? 'All time' : p === 'week' ? 'Last 7d' : p === 'month' ? 'Last 30d' : 'Today'}
+            </button>
+          ))}
+        </div>
+        {/* Custom date range */}
+        <div className="flex items-center gap-2 border-l border-red-200 pl-3">
+          <Calendar size={13} className="text-red-400"/>
+          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+            className="text-xs border border-red-200 rounded-lg px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-red-400"/>
+          <span className="text-xs text-red-400">to</span>
+          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+            className="text-xs border border-red-200 rounded-lg px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-red-400"/>
+        </div>
+        {/* Job filter */}
+        {jobs.length > 0 && (
+          <select value={jobFilter} onChange={e => setJobFilter(e.target.value)}
+            className="text-xs border border-red-200 rounded-lg px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-red-400">
+            <option value="all">All roles</option>
+            {jobs.map(j => <option key={j.id} value={j.id}>{j.title}</option>)}
+          </select>
+        )}
+        {(dateFrom || dateTo || jobFilter !== 'all') && (
+          <button onClick={() => { setDateFrom(''); setDateTo(''); setJobFilter('all') }}
+            className="text-xs text-red-500 hover:text-red-700 underline">Clear</button>
+        )}
+      </div>
+
+      {filtered.length === 0 ? (
+        <div className="text-center py-20 border-2 border-dashed border-gray-200 rounded-2xl">
+          <XCircle size={36} className="mx-auto text-gray-300 mb-3"/>
+          <p className="text-gray-400 text-sm">No rejected profiles match your filter</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {/* Table header */}
+          <div className="grid grid-cols-[2fr_1.5fr_1fr_1fr_1fr_auto] gap-3 px-4 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wide border-b border-gray-100">
+            <span>Candidate</span>
+            <span>Role</span>
+            <span>AI Score</span>
+            <span>Source</span>
+            <span>Rejected On</span>
+            <span></span>
+          </div>
+          {filtered.map(app => {
+            const name     = app.candidate?.full_name || 'Unknown'
+            const title    = app.candidate?.current_title || '—'
+            const jobTitle = app.job?.title || '—'
+            const score    = app.ai_match_score
+            const source   = app.candidate?.source || 'direct'
+            const date     = new Date(app.updated_at || app.created_at || '')
+            const dateStr  = date.toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' })
+            const timeStr  = date.toLocaleTimeString('en-IN', { hour:'2-digit', minute:'2-digit' })
+            const isRestoring = restoring === app.id
+
+            return (
+              <div key={app.id}
+                className="grid grid-cols-[2fr_1.5fr_1fr_1fr_1fr_auto] gap-3 items-center px-4 py-3 bg-white border border-gray-100 rounded-xl hover:border-red-200 hover:shadow-sm transition">
+                {/* Candidate */}
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-full bg-red-100 text-red-600 flex items-center justify-center text-sm font-bold flex-shrink-0">
+                    {name.charAt(0)}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-gray-900 truncate">{name}</div>
+                    <div className="text-xs text-gray-400 truncate">{title}</div>
+                  </div>
+                </div>
+                {/* Role */}
+                <div className="text-sm text-gray-600 truncate">{jobTitle}</div>
+                {/* Score */}
+                <div>
+                  {score ? (
+                    <span className={`text-xs font-bold px-2 py-1 rounded-full ${score >= 60 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-600'}`}>
+                      {score}%
+                    </span>
+                  ) : (
+                    <span className="text-xs text-gray-300">—</span>
+                  )}
+                </div>
+                {/* Source */}
+                <div>
+                  <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">
+                    {source === 'direct' ? '📩 Direct' : source.includes('portal') ? '🔗 Portal' : source}
+                  </span>
+                </div>
+                {/* Date */}
+                <div className="text-xs text-gray-500">
+                  <div>{dateStr}</div>
+                  <div className="text-gray-300">{timeStr}</div>
+                </div>
+                {/* Restore */}
+                <button
+                  onClick={() => restoreToApplied(app.id)}
+                  disabled={isRestoring}
+                  title="Move back to Applied"
+                  className="flex items-center gap-1 text-xs text-gray-400 hover:text-green-600 border border-gray-200 hover:border-green-300 px-2.5 py-1.5 rounded-lg transition disabled:opacity-50">
+                  {isRestoring ? <Loader2 size={11} className="animate-spin"/> : <RotateCcw size={11}/>}
+                  Restore
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default function KanbanBoard({ applications, rejectedApplications = [] }: Props) {
   const router   = useRouter()
-  const [blindMode,   setBlindMode]   = useState(false)
+  const [activeTab,    setActiveTab]    = useState<'pipeline' | 'rejected'>('pipeline')
+  const [blindMode,    setBlindMode]    = useState(false)
   const [showAddModal, setShowAddModal] = useState(false)
 
   const byStage = PIPELINE_STAGES.reduce((acc, stage) => {
@@ -286,110 +474,142 @@ export default function KanbanBoard({ applications }: Props) {
         />
       )}
 
-      {/* Toolbar */}
+      {/* Tabs + Toolbar */}
       <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
-          {blindMode && (
-            <div className="flex items-center gap-1.5 text-xs bg-blue-50 border border-blue-200 text-blue-700 px-3 py-1.5 rounded-lg font-medium">
-              <EyeOff size={12}/> Blind Screening Mode ON — names &amp; photos hidden to reduce unconscious bias
-            </div>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
+        {/* Tabs */}
+        <div className="flex items-center gap-1 bg-gray-100 rounded-xl p-1">
           <button
-            onClick={() => setShowAddModal(true)}
-            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border bg-red-600 text-white border-red-600 hover:bg-red-700 transition">
-            <UserPlus size={12}/> Add Candidate
-          </button>
-          <button
-            onClick={() => setBlindMode(b => !b)}
-            className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border transition ${
-              blindMode
-                ? 'bg-blue-600 text-white border-blue-600 hover:bg-blue-700'
-                : 'bg-white text-gray-600 border-gray-200 hover:border-blue-400 hover:text-blue-600'
+            onClick={() => setActiveTab('pipeline')}
+            className={`flex items-center gap-1.5 text-xs font-semibold px-4 py-2 rounded-lg transition ${
+              activeTab === 'pipeline' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
             }`}>
-            {blindMode ? <><Eye size={12}/> Reveal Names</> : <><EyeOff size={12}/> Blind Mode</>}
+            Active Pipeline
+            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${activeTab === 'pipeline' ? 'bg-red-100 text-red-600' : 'bg-gray-200 text-gray-500'}`}>
+              {applications.length}
+            </span>
+          </button>
+          <button
+            onClick={() => setActiveTab('rejected')}
+            className={`flex items-center gap-1.5 text-xs font-semibold px-4 py-2 rounded-lg transition ${
+              activeTab === 'rejected' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            }`}>
+            <XCircle size={12}/>
+            Rejected
+            {rejectedApplications.length > 0 && (
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${activeTab === 'rejected' ? 'bg-red-100 text-red-600' : 'bg-gray-200 text-gray-500'}`}>
+                {rejectedApplications.length}
+              </span>
+            )}
           </button>
         </div>
+
+        {/* Actions — only show on pipeline tab */}
+        {activeTab === 'pipeline' && (
+          <div className="flex items-center gap-2">
+            {blindMode && (
+              <div className="flex items-center gap-1.5 text-xs bg-blue-50 border border-blue-200 text-blue-700 px-3 py-1.5 rounded-lg font-medium">
+                <EyeOff size={12}/> Blind Screening Mode ON
+              </div>
+            )}
+            <button
+              onClick={() => setShowAddModal(true)}
+              className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border bg-red-600 text-white border-red-600 hover:bg-red-700 transition">
+              <UserPlus size={12}/> Add Candidate
+            </button>
+            <button
+              onClick={() => setBlindMode(b => !b)}
+              className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border transition ${
+                blindMode
+                  ? 'bg-blue-600 text-white border-blue-600 hover:bg-blue-700'
+                  : 'bg-white text-gray-600 border-gray-200 hover:border-blue-400 hover:text-blue-600'
+              }`}>
+              {blindMode ? <><Eye size={12}/> Reveal Names</> : <><EyeOff size={12}/> Blind Mode</>}
+            </button>
+          </div>
+        )}
       </div>
 
-      <div className="flex gap-3 overflow-x-auto pb-4">
-        {PIPELINE_STAGES.map(stage => {
-          const cards = byStage[stage] || []
-          return (
-            <div key={stage} className="flex-shrink-0 w-56">
-              {/* Column Header */}
-              <div className={`flex items-center justify-between px-3 py-2 rounded-t-lg mb-1 ${HEADER_COLORS[stage]}`}>
-                <span className="text-xs font-semibold">{STATUS_LABELS[stage]}</span>
-                <span className="text-xs font-bold">{cards.length}</span>
-              </div>
+      {/* ── Rejected tab ── */}
+      {activeTab === 'rejected' && (
+        <RejectedView rejected={rejectedApplications} />
+      )}
 
-              {/* Cards */}
-              <div className={`rounded-b-lg border min-h-24 p-2 space-y-2 ${STAGE_COLORS[stage]}`}>
-                {cards.length === 0 && (
-                  <p className="text-center text-xs text-gray-400 py-4">Empty</p>
-                )}
-                {cards.map((app, idx) => {
-                  const displayName  = blindMode ? anonymousLabel(app.candidate?.id || app.id) : app.candidate?.full_name
-                  const displayTitle = blindMode ? '— title hidden —' : app.candidate?.current_title
-                  const avatarChar   = blindMode ? '?' : (app.candidate?.full_name?.charAt(0) || '?')
+      {/* ── Pipeline Kanban ── */}
+      {activeTab === 'pipeline' && (
+        <div className="flex gap-3 overflow-x-auto pb-4">
+          {PIPELINE_STAGES.map(stage => {
+            const cards = byStage[stage] || []
+            return (
+              <div key={stage} className="flex-shrink-0 w-56">
+                {/* Column Header */}
+                <div className={`flex items-center justify-between px-3 py-2 rounded-t-lg mb-1 ${HEADER_COLORS[stage]}`}>
+                  <span className="text-xs font-semibold">{STATUS_LABELS[stage]}</span>
+                  <span className="text-xs font-bold">{cards.length}</span>
+                </div>
 
-                  return (
-                    <div key={app.id} className="relative">
-                      {/* Rank badge for top scorers */}
-                      {idx === 0 && app.ai_match_score && app.ai_match_score >= 70 && cards.length > 1 && (
-                        <div className="absolute -top-1 -right-1 w-4 h-4 bg-amber-400 rounded-full flex items-center justify-center z-10">
-                          <span className="text-[8px] font-black text-white">1</span>
-                        </div>
-                      )}
-                      <Link
-                        href={blindMode ? '#' : `/candidates/${app.candidate?.id}`}
-                        onClick={blindMode ? (e) => e.preventDefault() : undefined}
-                        className={`block bg-white rounded-lg border border-gray-100 p-3 shadow-sm hover:shadow-md transition ${blindMode ? 'cursor-default' : ''}`}>
+                {/* Cards */}
+                <div className={`rounded-b-lg border min-h-24 p-2 space-y-2 ${STAGE_COLORS[stage]}`}>
+                  {cards.length === 0 && (
+                    <p className="text-center text-xs text-gray-400 py-4">Empty</p>
+                  )}
+                  {cards.map((app, idx) => {
+                    const displayName  = blindMode ? anonymousLabel(app.candidate?.id || app.id) : app.candidate?.full_name
+                    const displayTitle = blindMode ? '— title hidden —' : app.candidate?.current_title
+                    const avatarChar   = blindMode ? '?' : (app.candidate?.full_name?.charAt(0) || '?')
 
-                        {/* Avatar + name row */}
-                        <div className="flex items-start justify-between gap-1 mb-1">
-                          <div className="flex items-center gap-1.5">
-                            <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold flex-shrink-0 ${blindMode ? 'bg-blue-100 text-blue-500' : 'bg-red-100 text-red-600'}`}>
-                              {avatarChar}
+                    return (
+                      <div key={app.id} className="relative">
+                        {idx === 0 && app.ai_match_score && app.ai_match_score >= 70 && cards.length > 1 && (
+                          <div className="absolute -top-1 -right-1 w-4 h-4 bg-amber-400 rounded-full flex items-center justify-center z-10">
+                            <span className="text-[8px] font-black text-white">1</span>
+                          </div>
+                        )}
+                        <Link
+                          href={blindMode ? '#' : `/candidates/${app.candidate?.id}`}
+                          onClick={blindMode ? (e) => e.preventDefault() : undefined}
+                          className={`block bg-white rounded-lg border border-gray-100 p-3 shadow-sm hover:shadow-md transition ${blindMode ? 'cursor-default' : ''}`}>
+
+                          <div className="flex items-start justify-between gap-1 mb-1">
+                            <div className="flex items-center gap-1.5">
+                              <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold flex-shrink-0 ${blindMode ? 'bg-blue-100 text-blue-500' : 'bg-red-100 text-red-600'}`}>
+                                {avatarChar}
+                              </div>
+                              <span className={`text-xs font-semibold leading-tight ${blindMode ? 'text-blue-700' : 'text-gray-900'}`}>
+                                {displayName}
+                              </span>
                             </div>
-                            <span className={`text-xs font-semibold leading-tight ${blindMode ? 'text-blue-700' : 'text-gray-900'}`}>
-                              {displayName}
-                            </span>
+                            <ScorePill score={app.ai_match_score}/>
                           </div>
-                          <ScorePill score={app.ai_match_score}/>
-                        </div>
 
-                        <div className={`text-[11px] leading-tight ${blindMode ? 'text-blue-300 italic' : 'text-gray-500'}`}>
-                          {displayTitle}
-                        </div>
-
-                        {app.job && (
-                          <div className="text-[10px] text-gray-400 mt-1 truncate">
-                            {app.job.title}
+                          <div className={`text-[11px] leading-tight ${blindMode ? 'text-blue-300 italic' : 'text-gray-500'}`}>
+                            {displayTitle}
                           </div>
-                        )}
 
-                        {/* AI Interview button — only in non-blind or after reveal */}
-                        {!blindMode && AI_INTERVIEW_STAGES.includes(stage) && (
-                          <AIInterviewButton app={app}/>
-                        )}
+                          {app.job && (
+                            <div className="text-[10px] text-gray-400 mt-1 truncate">
+                              {app.job.title}
+                            </div>
+                          )}
 
-                        {/* View AI session if already scheduled */}
-                        {stage === 'interview_scheduled' && !blindMode && (
-                          <div className="mt-1.5 flex items-center gap-1 text-[10px] text-violet-600 font-medium">
-                            <Video size={10}/> AI Interview Scheduled
-                          </div>
-                        )}
-                      </Link>
-                    </div>
-                  )
-                })}
+                          {!blindMode && AI_INTERVIEW_STAGES.includes(stage) && (
+                            <AIInterviewButton app={app}/>
+                          )}
+
+                          {stage === 'interview_scheduled' && !blindMode && (
+                            <div className="mt-1.5 flex items-center gap-1 text-[10px] text-violet-600 font-medium">
+                              <Video size={10}/> AI Interview Scheduled
+                            </div>
+                          )}
+                        </Link>
+                      </div>
+                    )
+                  })}
+                </div>
               </div>
-            </div>
-          )
-        })}
-      </div>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
