@@ -72,6 +72,8 @@ export default function InterviewConfigPage() {
   // Knockout questions
   const [knockouts,       setKnockouts]       = useState<any[]>([])
   const [knockoutLoading, setKnockoutLoading] = useState(false)
+  const [knockoutError,   setKnockoutError]   = useState<string | null>(null)
+  const [knockoutAdding,  setKnockoutAdding]  = useState(false)
   const [newKnockout, setNewKnockout] = useState({
     question: '', question_type: 'yes_no', pass_answer: 'yes',
     reject_message: 'You do not meet the minimum requirements for this role.',
@@ -218,15 +220,27 @@ export default function InterviewConfigPage() {
 
   async function addKnockout() {
     if (!newKnockout.question.trim() || !selectedJob) return
-    const res  = await fetch('/api/screening/knockout-config', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ ...newKnockout, job_id: selectedJob, sort_order: knockouts.length }),
-    })
-    const data = await res.json()
-    if (data.question) {
-      setKnockouts(prev => [...prev, data.question])
-      setNewKnockout({ question: '', question_type: 'yes_no', pass_answer: 'yes', reject_message: 'You do not meet the minimum requirements for this role.' })
+    setKnockoutAdding(true)
+    setKnockoutError(null)
+    try {
+      const res  = await fetch('/api/screening/knockout-config', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ ...newKnockout, job_id: selectedJob, sort_order: knockouts.length }),
+      })
+      const data = await res.json()
+      if (!res.ok || data.error) {
+        setKnockoutError(data.error || `Server error ${res.status}`)
+      } else if (data.question) {
+        setKnockouts(prev => [...prev, data.question])
+        setNewKnockout({ question: '', question_type: 'yes_no', pass_answer: 'yes', reject_message: 'You do not meet the minimum requirements for this role.' })
+      } else {
+        setKnockoutError('Unexpected response from server — question may not have been saved.')
+      }
+    } catch (err: any) {
+      setKnockoutError(err.message || 'Network error — could not reach server')
+    } finally {
+      setKnockoutAdding(false)
     }
   }
 
@@ -459,10 +473,25 @@ export default function InterviewConfigPage() {
                     onChange={e => setNewKnockout(n => ({...n, reject_message: e.target.value}))}
                     placeholder="Rejection message shown to candidate…"
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"/>
+                  {knockoutError && (
+                    <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                      <AlertCircle size={14} className="text-red-500 flex-shrink-0 mt-0.5"/>
+                      <div>
+                        <p className="text-xs font-semibold text-red-700">Failed to save question</p>
+                        <p className="text-xs text-red-600 mt-0.5">{knockoutError}</p>
+                        {knockoutError.toLowerCase().includes('does not exist') && (
+                          <p className="text-xs text-red-500 mt-1">
+                            ⚠️ The <code className="font-mono bg-red-100 px-1 rounded">knockout_questions</code> table is missing.
+                            Run <code className="font-mono bg-red-100 px-1 rounded">screening-schema.sql</code> in your Supabase SQL Editor.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
                   <button onClick={addKnockout}
-                    disabled={!newKnockout.question.trim()}
+                    disabled={!newKnockout.question.trim() || knockoutAdding}
                     className="flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-lg text-xs font-bold transition disabled:opacity-50">
-                    <Plus size={13}/> Add Knockout Question
+                    <Plus size={13}/> {knockoutAdding ? 'Saving…' : 'Add Knockout Question'}
                   </button>
                 </div>
               </>
