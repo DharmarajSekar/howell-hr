@@ -117,8 +117,17 @@ export async function POST(req: NextRequest) {
     const rejectThreshold    = pipelineConfig?.[0]?.auto_reject_below        ?? 40
 
     // ── 4. Determine overall result ────────────────────────
-    // Only act on score if AI scoring actually returned a meaningful result (> 0)
-    const scoringSucceeded = aiScore > 0
+    // Only act on score if:
+    //   a) AI scoring returned a non-zero result, AND
+    //   b) Candidate has enough profile data to be meaningfully scored
+    //      (prevents auto-rejection of candidates with incomplete/null profiles)
+    const hasEnoughData = Boolean(
+      (candidate.experience_years && candidate.experience_years > 0) ||
+      (candidate.skills           && (candidate.skills as any[]).length > 0) ||
+      (candidate.current_title    && candidate.current_title.trim())  ||
+      (candidate.summary          && candidate.summary.trim())
+    )
+    const scoringSucceeded = aiScore > 0 && hasEnoughData
 
     let overallResult = 'review'
     let autoRejected  = false

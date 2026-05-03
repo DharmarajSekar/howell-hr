@@ -29,22 +29,25 @@ export async function addCandidateAction(formData: {
   if (!email?.trim())     return { error: 'Email is required' }
   if (!job_id)            return { error: 'Please select a job' }
 
-  // Step 1: Upsert candidate
+  // Step 1: Upsert candidate — only include fields that are actually provided
+  // so we don't overwrite existing valid data with empty values from partial submissions
+  const candidateData: Record<string, any> = {
+    full_name: full_name.trim(),
+    email:     email.trim().toLowerCase(),
+    source:    'direct',
+  }
+  if (phone)              candidateData.phone              = phone
+  if (current_title)      candidateData.current_title      = current_title
+  if (current_company)    candidateData.current_company    = current_company
+  if (experience_years)   candidateData.experience_years   = parseInt(experience_years)
+  if (location)           candidateData.location           = location
+  if (salary_expectation) candidateData.salary_expectation = parseInt(salary_expectation)
+  if (Array.isArray(skills) && skills.length > 0) candidateData.skills = skills
+  if (summary)            candidateData.summary            = summary
+
   const { data: candidate, error: candErr } = await db()
     .from('candidates')
-    .upsert({
-      full_name:          full_name.trim(),
-      email:              email.trim().toLowerCase(),
-      phone:              phone           || null,
-      current_title:      current_title   || null,
-      current_company:    current_company || null,
-      experience_years:   experience_years ? parseInt(experience_years) : 0,
-      location:           location        || null,
-      salary_expectation: salary_expectation ? parseInt(salary_expectation) : null,
-      skills:             Array.isArray(skills) ? skills : [],
-      summary:            summary         || null,
-      source:             'direct',
-    }, { onConflict: 'email' })
+    .upsert(candidateData, { onConflict: 'email' })
     .select()
     .single()
 
