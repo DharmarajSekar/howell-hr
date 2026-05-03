@@ -4,9 +4,16 @@
  * Body: { applicationId: string }
  */
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/db'
+import { createClient } from '@supabase/supabase-js'
 
 export const dynamic = 'force-dynamic'
+
+function svc() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  )
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -15,7 +22,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'applicationId required' }, { status: 400 })
     }
 
-    const { error } = await db
+    const { error } = await svc()
       .from('applications')
       .update({
         status:     'applied',
