@@ -1,9 +1,19 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Modal from '@/components/ui/Modal'
 import { useToast } from '@/components/ui/Toast'
-import { Calendar, Video, Users, Loader2 } from 'lucide-react'
+import { Calendar, Video, Users, Loader2, Phone, Zap } from 'lucide-react'
 import type { Application } from '@/types'
+
+interface RoutingRule {
+  id: string
+  name: string
+  role_level: string
+  candidate_location: string
+  interview_type: string
+  interview_platform: string | null
+  priority: number
+}
 
 interface Props {
   open: boolean
@@ -12,61 +22,118 @@ interface Props {
   onScheduled?: () => void
 }
 
+/** Map job experience_min to a role level bucket */
+function getRoleLevel(job: any): string {
+  const exp = job?.experience_min ?? 0
+  if (exp <= 2)  return 'junior'
+  if (exp <= 5)  return 'mid'
+  if (exp <= 10) return 'senior'
+  return 'lead'
+}
+
+/** Find the best matching rule for this candidate+job */
+function matchRule(rules: RoutingRule[], job: any, candidateLocation: string): RoutingRule | null {
+  const roleLevel = getRoleLevel(job)
+  const candLoc   = (candidateLocation || '').toLowerCase()
+
+  // Rules are already sorted by priority desc
+  for (const rule of rules) {
+    const levelMatch = rule.role_level === 'any' || rule.role_level === roleLevel
+    const locMatch   = !rule.candidate_location ||
+                       candLoc.includes(rule.candidate_location.toLowerCase()) ||
+                       rule.candidate_location.toLowerCase().includes(candLoc)
+    if (levelMatch && locMatch) return rule
+  }
+  return null
+}
+
 export default function InterviewScheduler({ open, onClose, application, onScheduled }: Props) {
   const { toast } = useToast()
   const candidate = application.candidate
-  const job = application.job
+  const job       = application.job
 
-  const tomorrow = new Date(Date.now() + 86400000)
+  const tomorrow    = new Date(Date.now() + 86400000)
   const defaultDate = tomorrow.toISOString().split('T')[0]
 
   const [form, setForm] = useState({
-    date: defaultDate,
-    time: '10:00',
-    duration: 60,
-    type: 'video' as 'video' | 'in_person' | 'phone',
+    date:         defaultDate,
+    time:         '10:00',
+    duration:     60,
+    type:         'video' as 'video' | 'in_person' | 'phone',
     meeting_link: 'https://meet.google.com/new',
-    notes: '',
+    notes:        '',
   })
-  const [saving, setSaving] = useState(false)
+  const [saving,       setSaving]       = useState(false)
+  const [rules,        setRules]        = useState<RoutingRule[]>([])
+  const [matchedRule,  setMatchedRule]  = useState<RoutingRule | null>(null)
+  const [ruleApplied,  setRuleApplied]  = useState(false)
 
-  function set(k: string, v: any) { setForm(f => ({ ...f, [k]: v })) }
+  // Load routing rules and auto-apply on open
+  useEffect(() => {
+    if (!open) return
+    fetch('/api/interviews/routing-rules')
+      .then(r => r.json())
+      .then(data => {
+        const ruleList: RoutingRule[] = data.rules || []
+        setRules(ruleList)
+
+        const matched = matchRule(ruleList, job, candidate?.location || '')
+        if (matched) {
+          setMatchedRule(matched)
+          setRuleApplied(true)
+          const ivType = matched.interview_type === 'in_person' ? 'in_person'
+                       : matched.interview_type === 'phone'     ? 'phone'
+                       : 'video'
+          setForm(f => ({
+            ...f,
+            type:         ivType,
+            meeting_link: ivType === 'video'
+              ? (matched.interview_platform === 'zoom' ? 'https://zoom.us/j/new' : 'https://meet.google.com/new')
+              : f.meeting_link,
+          }))
+        }
+      })
+      .catch(() => {})
+  }, [open, job, candidate])
+
+  function set(k: string, v: any) {
+    setForm(f => ({ ...f, [k]: v }))
+    // If HR manually changes type, clear the auto-rule indication
+    if (k === 'type') setRuleApplied(false)
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setSaving(true)
     const scheduled_at = new Date(`${form.date}T${form.time}:00`).toISOString()
 
-    // Create interview
     await fetch('/api/interviews', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        application_id: application.id,
+        application_id:   application.id,
         scheduled_at,
         duration_minutes: form.duration,
-        interview_type: form.type,
-        meeting_link: form.type === 'video' ? form.meeting_link : null,
-        candidate_name: candidate?.full_name,
-        candidate_email: candidate?.email,
-        candidate_phone: candidate?.phone,
-        job_title: job?.title,
+        interview_type:   form.type,
+        meeting_link:     form.type === 'video' ? form.meeting_link : null,
+        candidate_name:   candidate?.full_name,
+        candidate_email:  candidate?.email,
+        candidate_phone:  candidate?.phone,
+        job_title:        job?.title,
       }),
     })
 
-    // Move application to interview_scheduled
     await fetch(`/api/applications/${application.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: 'interview_scheduled' }),
     })
 
-    // Send notification
     await fetch('/api/notifications', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        recipient_name: candidate?.full_name,
+        recipient_name:  candidate?.full_name,
         recipient_email: candidate?.email,
         recipient_phone: candidate?.phone,
         channel: 'whatsapp',
@@ -86,8 +153,21 @@ export default function InterviewScheduler({ open, onClose, application, onSched
         {/* Candidate + Job Summary */}
         <div className="bg-gray-50 rounded-xl p-4">
           <div className="font-semibold text-gray-900 text-sm">{candidate?.full_name}</div>
-          <div className="text-xs text-gray-500 mt-0.5">{job?.title} · {job?.location}</div>
+          <div className="text-xs text-gray-500 mt-0.5">
+            {job?.title} · {candidate?.location || job?.location || 'Location unknown'}
+          </div>
         </div>
+
+        {/* Auto-rule banner */}
+        {ruleApplied && matchedRule && (
+          <div className="flex items-start gap-2 bg-violet-50 border border-violet-200 rounded-xl px-3 py-2.5">
+            <Zap size={13} className="text-violet-600 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-xs font-semibold text-violet-800">Auto-applied routing rule</p>
+              <p className="text-[11px] text-violet-600 mt-0.5">"{matchedRule.name}" — you can override below</p>
+            </div>
+          </div>
+        )}
 
         {/* Interview Type */}
         <div>
@@ -96,7 +176,7 @@ export default function InterviewScheduler({ open, onClose, application, onSched
             {[
               { value: 'video',     label: 'Video Call', icon: Video },
               { value: 'in_person', label: 'In-Person',  icon: Users },
-              { value: 'phone',     label: 'Phone',      icon: Calendar },
+              { value: 'phone',     label: 'Phone',      icon: Phone },
             ].map(opt => (
               <button
                 key={opt.value}

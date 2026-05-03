@@ -238,11 +238,13 @@ function ScorePill({ score }: { score?: number | null }) {
 function AIInterviewButton({ app }: { app: Application }) {
   const router  = useRouter()
   const [loading, setLoading] = useState(false)
+  const [error,   setError]   = useState<string | null>(null)
 
   async function startAIInterview(e: React.MouseEvent) {
     e.preventDefault()
     e.stopPropagation()
     setLoading(true)
+    setError(null)
     try {
       const res  = await fetch('/api/interviews/start-ai-interview', {
         method:  'POST',
@@ -250,17 +252,32 @@ function AIInterviewButton({ app }: { app: Application }) {
         body:    JSON.stringify({ applicationId: app.id }),
       })
       const data = await res.json()
-      if (data.sessionId) router.push(`/interview/ai-room?sessionId=${data.sessionId}`)
+      if (data.sessionId) {
+        router.push(`/interview/ai-room?sessionId=${data.sessionId}`)
+      } else if (data.error) {
+        const isTableMissing = data.error.toLowerCase().includes('does not exist') ||
+                               data.error.toLowerCase().includes('schema cache')
+        setError(isTableMissing
+          ? 'Run interview-ai-schema.sql in Supabase first'
+          : data.error)
+      }
+    } catch {
+      setError('Network error — try again')
     } finally {
       setLoading(false)
     }
   }
 
   return (
-    <button onClick={startAIInterview} disabled={loading} title="Start AI Interview"
-      className="flex items-center gap-1 text-[10px] font-semibold bg-violet-600 text-white px-2 py-1 rounded-md hover:bg-violet-700 disabled:opacity-60 transition mt-1.5 w-full justify-center">
-      {loading ? <><Loader2 size={10} className="animate-spin"/> Starting…</> : <><Bot size={10}/> AI Interview</>}
-    </button>
+    <div className="mt-1.5">
+      <button onClick={startAIInterview} disabled={loading} title="Start AI Interview"
+        className="flex items-center gap-1 text-[10px] font-semibold bg-violet-600 text-white px-2 py-1 rounded-md hover:bg-violet-700 disabled:opacity-60 transition w-full justify-center">
+        {loading ? <><Loader2 size={10} className="animate-spin"/> Starting…</> : <><Bot size={10}/> AI Interview</>}
+      </button>
+      {error && (
+        <p className="text-[9px] text-red-500 mt-0.5 leading-tight text-center">{error}</p>
+      )}
+    </div>
   )
 }
 

@@ -498,6 +498,9 @@ export default function InterviewConfigPage() {
             )}
           </div>
 
+          {/* ── Routing Rules ───────────────────────────────── */}
+          <RoutingRulesSection />
+
           {/* Save Button */}
           <div className="flex items-center justify-between bg-gray-50 border border-gray-200 rounded-xl px-5 py-4">
             <div className="text-xs text-gray-500">
@@ -846,5 +849,162 @@ function ToggleField({ label, desc, value, onChange, color }: {
         <div className="text-xs text-gray-400">{desc}</div>
       </div>
     </label>
+  )
+}
+
+/* ── Routing Rules Section ───────────────────────────────────────────────── */
+function RoutingRulesSection() {
+  const [rules,      setRules]      = useState<any[]>([])
+  const [tableExists,setTableExists]= useState(true)
+  const [loading,    setLoading]    = useState(true)
+  const [saving,     setSaving]     = useState(false)
+  const [newRule, setNewRule] = useState({
+    name: '', role_level: 'any', candidate_location: '',
+    office_location: '', interview_type: 'video', interview_platform: '',
+  })
+
+  useEffect(() => {
+    fetch('/api/interviews/routing-rules')
+      .then(r => r.json())
+      .then(d => { setRules(d.rules || []); setTableExists(d.tableExists !== false) })
+      .finally(() => setLoading(false))
+  }, [])
+
+  async function addRule() {
+    if (!newRule.name || !newRule.interview_type) return
+    setSaving(true)
+    const res  = await fetch('/api/interviews/routing-rules', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newRule),
+    })
+    const data = await res.json()
+    if (data.rule) {
+      setRules(prev => [...prev, data.rule])
+      setNewRule({ name: '', role_level: 'any', candidate_location: '', office_location: '', interview_type: 'video', interview_platform: '' })
+    }
+    setSaving(false)
+  }
+
+  async function deleteRule(id: string) {
+    await fetch(`/api/interviews/routing-rules?id=${id}`, { method: 'DELETE' })
+    setRules(prev => prev.filter(r => r.id !== id))
+  }
+
+  const typeLabel: Record<string, string> = { video: '🎥 Video Call', in_person: '🏢 In-Person', phone: '📞 Phone' }
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl p-5 mb-4 shadow-sm">
+      <div className="flex items-center gap-2 mb-1">
+        <Zap size={16} className="text-violet-500"/>
+        <h2 className="font-semibold text-gray-900 text-sm">Interview Routing Rules</h2>
+      </div>
+      <p className="text-xs text-gray-400 mb-4 ml-6">
+        Auto-assign interview type when scheduling. Rules are matched by role level and candidate location — highest priority wins.
+      </p>
+
+      {loading && <div className="text-xs text-gray-400 py-3">Loading rules…</div>}
+
+      {!loading && !tableExists && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-4 flex items-start gap-2">
+          <AlertCircle size={14} className="text-amber-500 flex-shrink-0 mt-0.5"/>
+          <div>
+            <p className="text-xs font-semibold text-amber-700">Table not yet created</p>
+            <p className="text-xs text-amber-600 mt-0.5">
+              Run <code className="font-mono bg-amber-100 px-1 rounded">interview-routing-schema.sql</code> in your Supabase SQL Editor to enable this feature.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {!loading && (
+        <>
+          {/* Existing rules */}
+          {rules.length > 0 && (
+            <div className="space-y-2 mb-4">
+              {rules.map((rule: any) => (
+                <div key={rule.id} className="flex items-center gap-3 bg-violet-50 border border-violet-200 rounded-xl px-4 py-2.5">
+                  <Zap size={13} className="text-violet-500 flex-shrink-0"/>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-gray-800">{rule.name}</div>
+                    <div className="text-xs text-gray-500 mt-0.5 flex flex-wrap gap-2">
+                      <span className="bg-gray-100 px-1.5 py-0.5 rounded">Level: <strong>{rule.role_level}</strong></span>
+                      {rule.candidate_location && <span className="bg-gray-100 px-1.5 py-0.5 rounded">Location: <strong>{rule.candidate_location}</strong></span>}
+                      <span className="bg-violet-100 px-1.5 py-0.5 rounded text-violet-700 font-medium">→ {typeLabel[rule.interview_type] || rule.interview_type}</span>
+                      {rule.interview_platform && <span className="bg-gray-100 px-1.5 py-0.5 rounded">{rule.interview_platform}</span>}
+                    </div>
+                  </div>
+                  <button onClick={() => deleteRule(rule.id)} className="text-gray-400 hover:text-red-500 transition">
+                    <X size={14}/>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {rules.length === 0 && tableExists && (
+            <div className="text-center py-6 border-2 border-dashed border-gray-200 rounded-xl text-gray-400 text-xs mb-4">
+              No routing rules yet. Add one below.
+            </div>
+          )}
+
+          {/* Add new rule form */}
+          {tableExists && (
+            <div className="border border-dashed border-gray-300 rounded-xl p-4 space-y-3">
+              <div className="text-xs font-semibold text-gray-500 uppercase">Add Routing Rule</div>
+              <input
+                value={newRule.name}
+                onChange={e => setNewRule(n => ({...n, name: e.target.value}))}
+                placeholder="Rule name, e.g. Junior role outside Delhi → Zoom"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
+              />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Role Level</label>
+                  <select value={newRule.role_level} onChange={e => setNewRule(n => ({...n, role_level: e.target.value}))}
+                    className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500">
+                    <option value="any">Any level</option>
+                    <option value="junior">Junior (0–2 yrs)</option>
+                    <option value="mid">Mid (3–5 yrs)</option>
+                    <option value="senior">Senior (6–10 yrs)</option>
+                    <option value="lead">Lead (11+ yrs)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Candidate Location (keyword)</label>
+                  <input value={newRule.candidate_location}
+                    onChange={e => setNewRule(n => ({...n, candidate_location: e.target.value}))}
+                    placeholder="Leave blank = any location"
+                    className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Interview Type</label>
+                  <select value={newRule.interview_type} onChange={e => setNewRule(n => ({...n, interview_type: e.target.value}))}
+                    className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500">
+                    <option value="video">🎥 Video Call</option>
+                    <option value="in_person">🏢 In-Person</option>
+                    <option value="phone">📞 Phone</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Platform (optional)</label>
+                  <select value={newRule.interview_platform} onChange={e => setNewRule(n => ({...n, interview_platform: e.target.value}))}
+                    className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500">
+                    <option value="">Any / Not specified</option>
+                    <option value="zoom">Zoom</option>
+                    <option value="google_meet">Google Meet</option>
+                    <option value="ms_teams">MS Teams</option>
+                  </select>
+                </div>
+              </div>
+              <button onClick={addRule} disabled={!newRule.name || saving}
+                className="flex items-center gap-2 bg-violet-600 hover:bg-violet-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition disabled:opacity-50">
+                <Plus size={13}/> {saving ? 'Saving…' : 'Add Rule'}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
   )
 }
