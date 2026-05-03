@@ -22,9 +22,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const body = await req.json()
     const { categories, recommendation, comments, interviewer, overall_rating, status } = body
 
-    const updateData: Record<string, any> = {
-      updated_at: new Date().toISOString(),
-    }
+    const updateData: Record<string, any> = {}
 
     // Store structured feedback as JSON in the feedback column
     if (categories !== undefined || comments !== undefined || recommendation !== undefined) {
