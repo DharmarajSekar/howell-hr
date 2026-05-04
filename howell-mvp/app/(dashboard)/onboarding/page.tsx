@@ -1,9 +1,10 @@
 'use client'
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import {
   CheckCircle, Circle, Plus, Loader2, ChevronDown, ChevronUp,
   UserCheck, Mail, Package, Monitor, Database, Sparkles,
   AlertCircle, X, Shield, RefreshCw, Building2, Copy, Check,
+  Bot, Send, MapPin, Star, MessageSquare, ClipboardList,
 } from 'lucide-react'
 
 /* ── Types ─────────────────────────────────────────────────────────────────── */
@@ -224,6 +225,358 @@ function EmployeeCard({ record }: { record: OnboardingRecord }) {
   )
 }
 
+/* ── New-Joiner Chatbot Modal ──────────────────────────────────────────────── */
+function ChatbotModal({ record, onClose }: { record: OnboardingRecord; onClose: () => void }) {
+  const [messages, setMessages] = useState([
+    { role: 'assistant', content: `Hi ${record.candidate_name.split(' ')[0]}! 👋 I'm Howell Buddy, your AI onboarding assistant. I can help you with IT setup, HR policies, leave rules, first-day logistics, and anything else about joining Howell. What would you like to know?` }
+  ])
+  const [input, setInput]       = useState('')
+  const [loading, setLoading]   = useState(false)
+  const bottomRef               = useRef<HTMLDivElement>(null)
+
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
+
+  async function send() {
+    if (!input.trim() || loading) return
+    const userMsg = input.trim()
+    setInput('')
+    setMessages(prev => [...prev, { role: 'user', content: userMsg }])
+    setLoading(true)
+    try {
+      const res = await fetch('/api/chatbot/new-joiner', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message:      userMsg,
+          employeeName: record.candidate_name,
+          role:         record.job_title,
+          department:   record.department,
+          employeeId:   record.employee_id,
+          history:      messages.slice(-6),
+        }),
+      })
+      const data = await res.json()
+      setMessages(prev => [...prev, { role: 'assistant', content: data.reply || 'Let me check on that for you.' }])
+    } catch {
+      setMessages(prev => [...prev, { role: 'assistant', content: 'Sorry, I had trouble connecting. Please email hr@howellgroup.com.' }])
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const QUICK = ['How do I set up corporate email?', 'What documents do I need to submit?', 'When will my laptop be ready?', 'What is the leave policy?']
+
+  return (
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg flex flex-col" style={{ height: '560px' }}>
+        {/* Header */}
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 flex-shrink-0">
+          <div className="w-9 h-9 rounded-full bg-violet-100 flex items-center justify-center">
+            <Bot size={18} className="text-violet-600"/>
+          </div>
+          <div className="flex-1">
+            <div className="font-bold text-gray-900 text-sm">Howell Buddy</div>
+            <div className="text-[10px] text-green-500 font-medium">● Online · AI-powered 24/7 support</div>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg"><X size={15}/></button>
+        </div>
+
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          {messages.map((m, i) => (
+            <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
+                m.role === 'user'
+                  ? 'bg-red-700 text-white rounded-br-sm'
+                  : 'bg-gray-100 text-gray-800 rounded-bl-sm'
+              }`}>
+                {m.content}
+              </div>
+            </div>
+          ))}
+          {loading && (
+            <div className="flex justify-start">
+              <div className="bg-gray-100 rounded-2xl rounded-bl-sm px-4 py-3">
+                <Loader2 size={14} className="animate-spin text-gray-400"/>
+              </div>
+            </div>
+          )}
+          <div ref={bottomRef}/>
+        </div>
+
+        {/* Quick questions */}
+        {messages.length <= 1 && (
+          <div className="px-4 pb-2 flex flex-wrap gap-1.5 flex-shrink-0">
+            {QUICK.map((q, i) => (
+              <button key={i} onClick={() => { setInput(q); setTimeout(send, 50) }}
+                className="text-xs border border-gray-200 rounded-full px-3 py-1.5 text-gray-600 hover:border-violet-400 hover:text-violet-600 transition">
+                {q}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Input */}
+        <div className="px-4 pb-4 flex gap-2 flex-shrink-0 border-t border-gray-50 pt-3">
+          <input
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && send()}
+            placeholder="Ask anything about your onboarding…"
+            className="flex-1 border border-gray-200 rounded-full px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400"
+          />
+          <button onClick={send} disabled={!input.trim() || loading}
+            className="w-9 h-9 bg-violet-600 hover:bg-violet-700 text-white rounded-full flex items-center justify-center disabled:opacity-40">
+            <Send size={14}/>
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ── Feedback Modal ────────────────────────────────────────────────────────── */
+function FeedbackModal({ record, onClose }: { record: OnboardingRecord; onClose: () => void }) {
+  const [day,        setDay]        = useState<30 | 60 | 90>(30)
+  const [submitting, setSubmitting] = useState(false)
+  const [result,     setResult]     = useState<any>(null)
+  const [form, setForm] = useState({
+    overall_experience: 3,
+    it_setup_quality:   3,
+    team_welcome:       3,
+    role_clarity:       3,
+    open_feedback:      '',
+    would_recommend:    'yes',
+  })
+
+  function setF(k: string, v: any) { setForm(p => ({ ...p, [k]: v })) }
+
+  async function submit() {
+    setSubmitting(true)
+    try {
+      const res = await fetch('/api/onboarding/feedback', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          onboarding_record_id: record.id,
+          employee_name:        record.candidate_name,
+          employee_id:          record.employee_id,
+          check_in_day:         day,
+          responses:            { ...form },
+        }),
+      })
+      const data = await res.json()
+      setResult(data.analysis || data)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const RATINGS = ['Very Poor', 'Poor', 'Neutral', 'Good', 'Excellent']
+
+  return (
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <div className="flex items-center gap-2">
+            <ClipboardList size={16} className="text-green-600"/>
+            <h2 className="font-bold text-gray-900">Employee Check-in Feedback</h2>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg"><X size={15}/></button>
+        </div>
+
+        {!result ? (
+          <div className="p-5 space-y-4">
+            {/* Day selector */}
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-2">Check-in Period</label>
+              <div className="flex gap-2">
+                {([30, 60, 90] as const).map(d => (
+                  <button key={d} onClick={() => setDay(d)}
+                    className={`flex-1 py-2 rounded-lg text-sm font-semibold border transition ${day === d ? 'bg-green-700 text-white border-green-700' : 'border-gray-200 text-gray-600 hover:border-green-400'}`}>
+                    Day {d}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Rating questions */}
+            {[
+              { key: 'overall_experience', label: 'Overall onboarding experience' },
+              { key: 'it_setup_quality',   label: 'IT setup & system access' },
+              { key: 'team_welcome',       label: 'Team welcome & introductions' },
+              { key: 'role_clarity',       label: 'Role clarity & expectations' },
+            ].map(q => (
+              <div key={q.key}>
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5">{q.label}</label>
+                <div className="flex gap-2">
+                  {[1,2,3,4,5].map(n => (
+                    <button key={n} onClick={() => setF(q.key, n)}
+                      className={`flex-1 py-2 rounded-lg text-xs font-semibold border transition ${(form as any)[q.key] === n ? 'bg-green-100 text-green-800 border-green-400' : 'border-gray-100 text-gray-500 hover:border-gray-300'}`}>
+                      {n} <span className="hidden sm:inline">— {RATINGS[n-1]}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Would you recommend Howell to a friend?</label>
+              <div className="flex gap-2">
+                {['yes','maybe','no'].map(opt => (
+                  <button key={opt} onClick={() => setF('would_recommend', opt)}
+                    className={`flex-1 py-2 rounded-lg text-xs font-semibold border capitalize transition ${form.would_recommend === opt ? 'bg-blue-100 text-blue-800 border-blue-400' : 'border-gray-100 text-gray-500 hover:border-gray-300'}`}>
+                    {opt}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Open feedback (optional)</label>
+              <textarea value={form.open_feedback} onChange={e => setF('open_feedback', e.target.value)} rows={3}
+                placeholder="Share any other thoughts about your onboarding experience…"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-green-400"/>
+            </div>
+
+            <div className="flex gap-3 pt-2 border-t border-gray-100">
+              <button onClick={onClose} className="flex-1 border border-gray-200 text-gray-600 py-2.5 rounded-lg text-sm hover:bg-gray-50">Cancel</button>
+              <button onClick={submit} disabled={submitting}
+                className="flex-1 bg-green-700 text-white py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50">
+                {submitting ? <Loader2 size={14} className="animate-spin"/> : <Sparkles size={14}/>}
+                {submitting ? 'Analysing…' : 'Submit & Analyse'}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="p-5">
+            <div className={`rounded-xl p-4 mb-4 ${result.sentiment === 'positive' ? 'bg-green-50 border border-green-200' : result.sentiment === 'at_risk' ? 'bg-red-50 border border-red-200' : 'bg-yellow-50 border border-yellow-200'}`}>
+              <div className="flex items-center gap-2 mb-2">
+                <Sparkles size={15} className={result.sentiment === 'positive' ? 'text-green-600' : result.sentiment === 'at_risk' ? 'text-red-600' : 'text-yellow-600'}/>
+                <span className="font-bold text-sm capitalize">{result.sentiment === 'at_risk' ? '⚠️ At Risk' : result.sentiment === 'positive' ? '✅ Positive' : '⚡ Neutral'}</span>
+                <span className="ml-auto text-xs font-medium">Risk Score: {result.risk_score}/100</span>
+              </div>
+              <p className="text-sm text-gray-700">{result.summary}</p>
+              {result.flags?.length > 0 && (
+                <div className="mt-2">
+                  <div className="text-xs font-semibold text-red-600 mb-1">Flags:</div>
+                  {result.flags.map((f: string, i: number) => <div key={i} className="text-xs text-red-600">• {f}</div>)}
+                </div>
+              )}
+              {result.sentiment === 'at_risk' && (
+                <div className="mt-2 text-xs text-red-700 font-medium">⚡ Risk alert has been sent to HR team.</div>
+              )}
+            </div>
+            <button onClick={onClose} className="w-full bg-gray-900 text-white py-2.5 rounded-lg text-sm font-semibold">Done</button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/* ── Site Allocation Modal ─────────────────────────────────────────────────── */
+function SiteAllocationModal({ record, onClose }: { record: OnboardingRecord; onClose: () => void }) {
+  const [loading,  setLoading]  = useState(false)
+  const [result,   setResult]   = useState<any>(null)
+  const [prefCity, setPrefCity] = useState('')
+
+  async function allocate() {
+    setLoading(true)
+    try {
+      const res = await fetch('/api/site-allocation', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          candidateName:     record.candidate_name,
+          role:              record.job_title,
+          department:        record.department,
+          preferredLocation: prefCity,
+        }),
+      })
+      setResult(await res.json())
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <div className="flex items-center gap-2">
+            <MapPin size={16} className="text-orange-500"/>
+            <h2 className="font-bold text-gray-900">AI Site Allocation</h2>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg"><X size={15}/></button>
+        </div>
+        <div className="p-5 space-y-4">
+          <div className="bg-orange-50 border border-orange-100 rounded-xl p-3 text-xs text-orange-700">
+            Claude analyses the role, department, and candidate's preferred city to recommend the best Howell site.
+          </div>
+
+          {!result ? (
+            <>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Candidate Preferred City (optional)</label>
+                <input value={prefCity} onChange={e => setPrefCity(e.target.value)}
+                  placeholder="e.g. Chennai, Mumbai, Bengaluru…"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"/>
+              </div>
+              <div className="grid grid-cols-2 gap-3 text-xs text-gray-500">
+                <div className="bg-gray-50 rounded-lg p-3">
+                  <div className="font-semibold text-gray-700 mb-1">Role</div>
+                  <div>{record.job_title}</div>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-3">
+                  <div className="font-semibold text-gray-700 mb-1">Department</div>
+                  <div>{record.department || 'Engineering'}</div>
+                </div>
+              </div>
+              <div className="flex gap-3">
+                <button onClick={onClose} className="flex-1 border border-gray-200 text-gray-600 py-2.5 rounded-lg text-sm hover:bg-gray-50">Cancel</button>
+                <button onClick={allocate} disabled={loading}
+                  className="flex-1 bg-orange-600 text-white py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50">
+                  {loading ? <Loader2 size={14} className="animate-spin"/> : <Sparkles size={14}/>}
+                  {loading ? 'Allocating…' : 'Get AI Recommendation'}
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="bg-orange-50 border border-orange-200 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <MapPin size={16} className="text-orange-600"/>
+                  <span className="font-bold text-orange-800">{result.allocated_site}</span>
+                  <span className="ml-auto text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-medium">{result.confidence}% match</span>
+                </div>
+                <div className="text-sm font-medium text-orange-700 mb-2">{result.allocated_city}</div>
+                <p className="text-xs text-gray-600">{result.reason}</p>
+              </div>
+              {result.alternatives?.length > 0 && (
+                <div>
+                  <div className="text-xs font-semibold text-gray-500 mb-2">Alternative sites</div>
+                  <div className="space-y-1.5">
+                    {result.alternatives.map((a: any, i: number) => (
+                      <div key={i} className="flex items-center gap-2 text-xs text-gray-600 bg-gray-50 rounded-lg px-3 py-2">
+                        <MapPin size={11} className="text-gray-400"/>{a.site} — {a.city}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div className="flex gap-3">
+                <button onClick={() => setResult(null)} className="flex-1 border border-gray-200 text-gray-600 py-2.5 rounded-lg text-sm hover:bg-gray-50">Re-run</button>
+                <button onClick={onClose} className="flex-1 bg-gray-900 text-white py-2.5 rounded-lg text-sm font-semibold">Confirm & Close</button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 /* ── Start Onboarding Modal ────────────────────────────────────────────────── */
 function StartOnboardingModal({
   hiredCandidates,
@@ -415,6 +768,9 @@ export default function OnboardingPage() {
   const [showEmail,     setShowEmail]     = useState<OnboardingRecord | null>(null)
   const [showKit,       setShowKit]       = useState<OnboardingRecord | null>(null)
   const [showIT,        setShowIT]        = useState<OnboardingRecord | null>(null)
+  const [showChat,      setShowChat]      = useState<OnboardingRecord | null>(null)
+  const [showFeedback,  setShowFeedback]  = useState<OnboardingRecord | null>(null)
+  const [showSite,      setShowSite]      = useState<OnboardingRecord | null>(null)
   const [hiredApps,     setHiredApps]     = useState<any[]>([])
 
   const load = useCallback(async () => {
@@ -482,9 +838,12 @@ export default function OnboardingPage() {
           onStarted={handleOnboardingStarted}
         />
       )}
-      {showEmail && <WelcomeEmailModal record={showEmail} onClose={() => setShowEmail(null)}/>}
-      {showKit   && <KitModal  record={showKit}  onClose={() => setShowKit(null)}/>}
-      {showIT    && <ITPanelModal record={showIT} onClose={() => setShowIT(null)}/>}
+      {showEmail    && <WelcomeEmailModal   record={showEmail}   onClose={() => setShowEmail(null)}/>}
+      {showKit      && <KitModal            record={showKit}     onClose={() => setShowKit(null)}/>}
+      {showIT       && <ITPanelModal        record={showIT}      onClose={() => setShowIT(null)}/>}
+      {showChat     && <ChatbotModal        record={showChat}    onClose={() => setShowChat(null)}/>}
+      {showFeedback && <FeedbackModal       record={showFeedback} onClose={() => setShowFeedback(null)}/>}
+      {showSite     && <SiteAllocationModal record={showSite}    onClose={() => setShowSite(null)}/>}
 
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
@@ -599,7 +958,7 @@ export default function OnboardingPage() {
                     {record.employee_id && <EmployeeCard record={record}/>}
 
                     {/* Automation Action Buttons */}
-                    <div className="grid grid-cols-3 gap-3 mb-5">
+                    <div className="grid grid-cols-3 gap-3 mb-3">
                       <button onClick={() => setShowEmail(record)}
                         className="flex flex-col items-center gap-1.5 p-3 rounded-xl border border-blue-100 bg-blue-50 hover:bg-blue-100 transition">
                         <Mail size={18} className="text-blue-600"/>
@@ -617,6 +976,27 @@ export default function OnboardingPage() {
                         <Monitor size={18} className="text-violet-600"/>
                         <span className="text-xs font-semibold text-violet-700">IT Provisioning</span>
                         <span className="text-[10px] text-violet-500">{record.corporate_email ? '✓ Active' : 'Pending'}</span>
+                      </button>
+                    </div>
+                    {/* New feature buttons */}
+                    <div className="grid grid-cols-3 gap-3 mb-5">
+                      <button onClick={() => setShowChat(record)}
+                        className="flex flex-col items-center gap-1.5 p-3 rounded-xl border border-violet-200 bg-violet-50 hover:bg-violet-100 transition">
+                        <Bot size={18} className="text-violet-600"/>
+                        <span className="text-xs font-semibold text-violet-700">Howell Buddy</span>
+                        <span className="text-[10px] text-violet-500">AI chat support</span>
+                      </button>
+                      <button onClick={() => setShowFeedback(record)}
+                        className="flex flex-col items-center gap-1.5 p-3 rounded-xl border border-green-200 bg-green-50 hover:bg-green-100 transition">
+                        <Star size={18} className="text-green-600"/>
+                        <span className="text-xs font-semibold text-green-700">Check-in Feedback</span>
+                        <span className="text-[10px] text-green-500">Day 30/60/90</span>
+                      </button>
+                      <button onClick={() => setShowSite(record)}
+                        className="flex flex-col items-center gap-1.5 p-3 rounded-xl border border-orange-200 bg-orange-50 hover:bg-orange-100 transition">
+                        <MapPin size={18} className="text-orange-600"/>
+                        <span className="text-xs font-semibold text-orange-700">Site Allocation</span>
+                        <span className="text-[10px] text-orange-500">AI assignment</span>
                       </button>
                     </div>
 

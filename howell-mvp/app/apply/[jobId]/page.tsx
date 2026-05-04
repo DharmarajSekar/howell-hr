@@ -1,8 +1,106 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useParams } from 'next/navigation'
-import { Loader2, Sparkles, CheckCircle, Upload } from 'lucide-react'
+import { Loader2, Sparkles, CheckCircle, Upload, Bot, Send, X, MessageCircle } from 'lucide-react'
 import type { Job } from '@/types'
+
+/* ── Candidate Chatbot Widget ──────────────────────────────────────────────── */
+function CandidateChatbot({ jobTitle, candidateName }: { jobTitle: string; candidateName: string }) {
+  const [open,     setOpen]    = useState(false)
+  const [messages, setMessages] = useState([
+    { role: 'assistant', content: `Hi! 👋 I'm the Howell HR assistant. I can answer your questions about this ${jobTitle} role, the application process, and what to expect next. What would you like to know?` }
+  ])
+  const [input,   setInput]   = useState('')
+  const [loading, setLoading] = useState(false)
+  const bottomRef             = useRef<HTMLDivElement>(null)
+
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, open])
+
+  async function send() {
+    if (!input.trim() || loading) return
+    const userMsg = input.trim()
+    setInput('')
+    setMessages(prev => [...prev, { role: 'user', content: userMsg }])
+    setLoading(true)
+    try {
+      const res = await fetch('/api/chatbot/candidate', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message:       userMsg,
+          candidateName: candidateName || 'there',
+          stage:         'Applied',
+          history:       messages.slice(-6),
+        }),
+      })
+      const data = await res.json()
+      setMessages(prev => [...prev, { role: 'assistant', content: data.reply }])
+    } catch {
+      setMessages(prev => [...prev, { role: 'assistant', content: 'Sorry, something went wrong. Please email careers@howellgroup.com.' }])
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const QUICK = ['What documents do I need?', 'How long does the process take?', 'Is this a remote role?']
+
+  return (
+    <>
+      {/* Floating button */}
+      <button onClick={() => setOpen(o => !o)}
+        className="fixed bottom-6 right-6 z-40 w-14 h-14 bg-red-700 hover:bg-red-800 text-white rounded-full shadow-lg flex items-center justify-center transition">
+        {open ? <X size={20}/> : <MessageCircle size={22}/>}
+      </button>
+
+      {/* Chat window */}
+      {open && (
+        <div className="fixed bottom-24 right-6 z-40 w-80 bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col" style={{ height: '420px' }}>
+          <div className="flex items-center gap-2 px-4 py-3 bg-red-700 rounded-t-2xl">
+            <Bot size={16} className="text-white"/>
+            <span className="text-white font-semibold text-sm">Howell HR Assistant</span>
+            <span className="ml-auto text-xs text-red-200">● Online</span>
+          </div>
+          <div className="flex-1 overflow-y-auto p-3 space-y-2">
+            {messages.map((m, i) => (
+              <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                <div className={`max-w-[85%] rounded-2xl px-3 py-2 text-xs leading-relaxed ${m.role === 'user' ? 'bg-red-700 text-white rounded-br-sm' : 'bg-gray-100 text-gray-800 rounded-bl-sm'}`}>
+                  {m.content}
+                </div>
+              </div>
+            ))}
+            {loading && (
+              <div className="flex justify-start">
+                <div className="bg-gray-100 rounded-2xl rounded-bl-sm px-3 py-2">
+                  <Loader2 size={12} className="animate-spin text-gray-400"/>
+                </div>
+              </div>
+            )}
+            <div ref={bottomRef}/>
+          </div>
+          {messages.length <= 1 && (
+            <div className="px-3 pb-2 flex flex-wrap gap-1">
+              {QUICK.map((q, i) => (
+                <button key={i} onClick={() => { setInput(q); setTimeout(send, 50) }}
+                  className="text-[10px] border border-gray-200 rounded-full px-2 py-1 text-gray-500 hover:border-red-300 hover:text-red-600 transition">
+                  {q}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="px-3 pb-3 flex gap-2 border-t border-gray-100 pt-2">
+            <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && send()}
+              placeholder="Ask a question…"
+              className="flex-1 border border-gray-200 rounded-full px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-red-400"/>
+            <button onClick={send} disabled={!input.trim() || loading}
+              className="w-7 h-7 bg-red-700 text-white rounded-full flex items-center justify-center disabled:opacity-40">
+              <Send size={11}/>
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
 
 export default function ApplyPage() {
   const { jobId } = useParams()
@@ -220,6 +318,9 @@ export default function ApplyPage() {
           </form>
         </div>
       </div>
+
+      {/* Floating chatbot */}
+      <CandidateChatbot jobTitle={job.title} candidateName={form.full_name}/>
     </div>
   )
 }
