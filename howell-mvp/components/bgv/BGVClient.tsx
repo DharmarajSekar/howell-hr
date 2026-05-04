@@ -219,13 +219,23 @@ export default function BGVClient({ records: initial, applications }: Props) {
                 )}
               </div>
 
-              {/* Fraud flag alert */}
+              {/* Fraud flag / Hiring Alert */}
               {selected.fraud_flag && (
-                <div className="mx-5 mt-4 flex gap-3 bg-red-50 border border-red-200 rounded-xl p-4">
-                  <AlertTriangle size={18} className="text-red-500 flex-shrink-0 mt-0.5"/>
-                  <div>
-                    <div className="text-sm font-bold text-red-700 mb-0.5">Fraud Flag Detected</div>
-                    <p className="text-xs text-red-600">{selected.fraud_notes || 'Discrepancy found during verification. Manual review required.'}</p>
+                <div className="mx-5 mt-4">
+                  <div className="flex gap-3 bg-red-50 border-2 border-red-300 rounded-xl p-4">
+                    <AlertTriangle size={20} className="text-red-500 flex-shrink-0 mt-0.5 animate-pulse"/>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-sm font-bold text-red-700">🚨 Hiring Alert — BGV Red Flag</span>
+                        <span className="text-[10px] bg-red-600 text-white px-2 py-0.5 rounded-full font-bold">CRITICAL</span>
+                      </div>
+                      <p className="text-xs text-red-600 mb-2">{selected.fraud_notes || 'Discrepancy found during background verification. Manual review required before proceeding.'}</p>
+                      <div className="flex flex-wrap gap-2 text-[10px]">
+                        <span className="bg-red-100 text-red-700 border border-red-200 px-2 py-0.5 rounded-full">⚠ Hiring on hold</span>
+                        <span className="bg-red-100 text-red-700 border border-red-200 px-2 py-0.5 rounded-full">📧 Alert sent to HR team</span>
+                        <span className="bg-red-100 text-red-700 border border-red-200 px-2 py-0.5 rounded-full">📋 Notification logged</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}
@@ -277,17 +287,41 @@ export default function BGVClient({ records: initial, applications }: Props) {
                     No documents uploaded yet.
                   </div>
                 ) : (
-                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                  <div className="space-y-3 max-h-72 overflow-y-auto">
                     {(selected.documents || []).map((doc: any) => (
-                      <div key={doc.id} className="flex items-center gap-3 p-2.5 rounded-lg bg-gray-50 border border-gray-100">
-                        <FileText size={16} className="text-gray-500 flex-shrink-0"/>
-                        <div className="flex-1 min-w-0">
-                          <div className="text-xs font-medium text-gray-700">{doc.document_type}</div>
-                          <div className="text-xs text-gray-400 truncate">{doc.file_name}</div>
+                      <div key={doc.id} className="rounded-xl bg-gray-50 border border-gray-100 overflow-hidden">
+                        {/* Doc header */}
+                        <div className="flex items-center gap-3 p-2.5">
+                          <FileText size={15} className="text-gray-500 flex-shrink-0"/>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs font-semibold text-gray-700">{doc.document_type}</div>
+                            <div className="text-[10px] text-gray-400 truncate">{doc.file_name}</div>
+                          </div>
+                          <div className="flex items-center gap-1.5 flex-shrink-0">
+                            {doc.classified_as && (
+                              <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full font-medium">{doc.classified_as}</span>
+                            )}
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${doc.verified ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                              {doc.verified ? '✓ Verified' : 'Uploaded'}
+                            </span>
+                          </div>
                         </div>
-                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${doc.verified ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-                          {doc.verified ? 'Verified' : 'Uploaded'}
-                        </span>
+                        {/* OCR extracted fields */}
+                        {doc.ocr_data && Object.keys(doc.ocr_data).length > 0 && (
+                          <div className="border-t border-gray-100 bg-white px-3 py-2">
+                            <div className="text-[10px] font-bold text-violet-600 uppercase tracking-wide mb-1.5 flex items-center gap-1">
+                              <Zap size={9}/> AI OCR — Extracted Fields
+                            </div>
+                            <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
+                              {Object.entries(doc.ocr_data).map(([key, val]: [string, any]) => (
+                                <div key={key}>
+                                  <span className="text-[9px] text-gray-400 capitalize">{key.replace(/_/g, ' ')}: </span>
+                                  <span className="text-[10px] font-medium text-gray-700">{val}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
