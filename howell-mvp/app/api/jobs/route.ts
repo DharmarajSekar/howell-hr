@@ -1,5 +1,6 @@
 export const dynamic = 'force-dynamic'
 import { NextResponse } from 'next/server'
+import { revalidatePath } from 'next/cache'
 import { createClient } from '@supabase/supabase-js'
 import { db } from '@/lib/db'
 
@@ -42,6 +43,9 @@ export async function POST(req: Request) {
       result = await svc().from('jobs').insert(insertPayload).select().single()
     }
     if (result.error) return NextResponse.json({ error: result.error.message }, { status: 500 })
+    // Bust the Next.js page cache so /jobs renders fresh on next visit
+    revalidatePath('/jobs')
+    revalidatePath('/sourcing')
     return NextResponse.json(result.data, { status: 201 })
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 })

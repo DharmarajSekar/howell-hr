@@ -7,7 +7,15 @@ import { createClient } from '@supabase/supabase-js'
 function svc() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    {
+      global: {
+        // Disable Next.js fetch cache for all Supabase queries so server
+        // components always get fresh data from the database
+        fetch: (url: RequestInfo | URL, options: RequestInit = {}) =>
+          fetch(url, { ...options, cache: 'no-store' }),
+      },
+    }
   )
 }
 
