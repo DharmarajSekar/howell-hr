@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS candidate_messages (
   stage            TEXT,
   message          TEXT NOT NULL,
   direction        TEXT NOT NULL DEFAULT 'out' CHECK (direction IN ('out','in')),
-  status           TEXT NOT NULL DEFAULT 'delivered' CHECK (status IN ('pending','delivered','read','failed')),
+  status           TEXT NOT NULL DEFAULT 'delivered' CHECK (status IN ('pending','delivered','read','failed','received')),
   auto_triggered   BOOLEAN DEFAULT FALSE,
   provider_ref     TEXT,
   sent_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),

@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
         stage:           stage || null,
         message,
         direction,
-        status:          delivered ? 'delivered' : 'failed',
+        status:          direction === 'in' ? 'received' : delivered ? 'delivered' : 'failed',
         auto_triggered,
         provider_ref,
         sent_at:         new Date().toISOString(),

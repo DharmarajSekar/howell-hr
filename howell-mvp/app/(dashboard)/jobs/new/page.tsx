@@ -75,19 +75,32 @@ export default function NewJobPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setSaving(true)
-    await fetch('/api/jobs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ...form,
-        skills,
-        experience_min: Number(form.experience_min),
-        experience_max: Number(form.experience_max),
-        salary_min: form.salary_min ? Number(form.salary_min) : undefined,
-        salary_max: form.salary_max ? Number(form.salary_max) : undefined,
-      }),
-    })
-    router.push('/jobs')
+    try {
+      const res = await fetch('/api/jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...form,
+          skills,
+          experience_min: Number(form.experience_min),
+          experience_max: Number(form.experience_max),
+          salary_min: form.salary_min ? Number(form.salary_min) : undefined,
+          salary_max: form.salary_max ? Number(form.salary_max) : undefined,
+        }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        alert(`Failed to publish job: ${err.error || res.statusText}`)
+        setSaving(false)
+        return
+      }
+      // Bust Next.js router cache so /jobs re-fetches from DB
+      router.refresh()
+      router.push('/jobs')
+    } catch (err: any) {
+      alert(`Error: ${err.message}`)
+      setSaving(false)
+    }
   }
 
   return (
