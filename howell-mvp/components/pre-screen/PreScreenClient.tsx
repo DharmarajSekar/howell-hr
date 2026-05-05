@@ -1,6 +1,6 @@
 'use client'
 import { useState } from 'react'
-import { Bot, Plus, Play, CheckCircle, Clock, Star, ChevronDown, ChevronUp, Zap, User, MessageSquare, Send } from 'lucide-react'
+import { Bot, Plus, Play, CheckCircle, Clock, Star, ChevronDown, ChevronUp, Zap, User, MessageSquare, Send, Video, Copy, ExternalLink } from 'lucide-react'
 
 const REC_COLORS: Record<string, string> = {
   'Strong Hire':       'bg-green-100 text-green-700 border-green-200',
@@ -202,11 +202,24 @@ export default function PreScreenClient({ sessions: initial, applications }: Pro
                   </div>
                 )}
                 {s.status === 'pending' && (
-                  <button
-                    onClick={e => { e.stopPropagation(); setActiveBot(s); setBotStep(0); setBotAnswers([]); }}
-                    className="flex items-center gap-1.5 text-xs text-red-700 hover:text-red-800 font-medium mt-1">
-                    <Play size={12}/> Start Bot Interview
-                  </button>
+                  <div className="flex items-center gap-2 mt-1">
+                    <button
+                      onClick={e => { e.stopPropagation(); setActiveBot(s); setBotStep(0); setBotAnswers([]); }}
+                      className="flex items-center gap-1.5 text-xs text-red-700 hover:text-red-800 font-medium">
+                      <Play size={12}/> Text Bot
+                    </button>
+                    <span className="text-gray-300">|</span>
+                    <button
+                      onClick={e => {
+                        e.stopPropagation()
+                        const url = `${window.location.origin}/video-prescreen/${s.id}`
+                        navigator.clipboard.writeText(url)
+                        alert(`Video link copied!\n\n${url}\n\nShare this with the candidate.`)
+                      }}
+                      className="flex items-center gap-1.5 text-xs text-purple-600 hover:text-purple-700 font-medium">
+                      <Video size={12}/> Copy Video Link
+                    </button>
+                  </div>
                 )}
               </div>
             ))

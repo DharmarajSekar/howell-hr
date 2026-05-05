@@ -8,7 +8,7 @@ import {
   UserCheck, Globe, Bot, BarChart2, ShieldCheck, ChevronDown,
   ChevronRight, Database, MessageSquare, Gift, Star, ClipboardList,
   TrendingDown, DoorOpen, Package, BookOpen, Home, AlertCircle,
-  UserCog, Activity, Link2, Video, Settings2
+  UserCog, Activity, Link2, Video, Settings2, Phone
 } from 'lucide-react'
 
 const SECTIONS = [
@@ -21,14 +21,15 @@ const SECTIONS = [
   {
     label: 'Recruitment',
     items: [
-      { href: '/sourcing',          label: 'AI Sourcing',       icon: Globe,         badge: '' },
-      { href: '/talent-pool',       label: 'Talent Pool',       icon: Database,      badge: '' },
-      { href: '/jobs',              label: 'Job Postings',      icon: Briefcase },
-      { href: '/candidates',        label: 'Candidates',        icon: Users },
-      { href: '/pre-screen',        label: 'Pre-Screen Bot',    icon: Bot },
-      { href: '/interviews',        label: 'Interviews',        icon: Calendar },
-      { href: '/interview/ai-room', label: 'AI Interview Room', icon: Video,    badge: '' },
-      { href: '/hiring-decisions',  label: 'Hire / Hold',       icon: BarChart2 },
+      { href: '/sourcing',                label: 'AI Sourcing',         icon: Globe,         badge: '' },
+      { href: '/talent-pool',             label: 'Talent Pool',         icon: Database,      badge: '' },
+      { href: '/jobs',                    label: 'Job Postings',        icon: Briefcase },
+      { href: '/candidates',              label: 'Candidates',          icon: Users },
+      { href: '/pre-screen',              label: 'Pre-Screen Bot',      icon: Bot },
+      { href: '/pre-screen/recordings',   label: 'Video Recordings',    icon: Video,         badge: 'NEW' },
+      { href: '/interviews',              label: 'Interviews',          icon: Calendar },
+      { href: '/interview/ai-room',       label: 'AI Interview Room',   icon: Video,         badge: '' },
+      { href: '/hiring-decisions',        label: 'Hire / Hold',         icon: BarChart2 },
     ]
   },
   {
@@ -69,6 +70,7 @@ const SECTIONS = [
     items: [
       { href: '/integrations',              label: 'Portal Integrations',  icon: Link2,     badge: '' },
       { href: '/settings/interview-config', label: 'Interview Pipeline',   icon: Settings2, badge: '' },
+      { href: '/settings/ivr',              label: 'IVR Voice Bot',        icon: Phone,     badge: 'NEW' },
     ]
   },
 ]
