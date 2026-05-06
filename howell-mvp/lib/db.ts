@@ -322,10 +322,15 @@ export const db = {
 
   metrics: async () => {
     const supabase = svc()
-    const [jobsRes, candidatesRes, appsRes] = await Promise.all([
+    const [jobsRes, candidatesRes, appsRes, activityRes] = await Promise.all([
       supabase.from('jobs').select('status'),
       supabase.from('candidates').select('id'),
       supabase.from('applications').select('status, ai_match_score'),
+      supabase
+        .from('applications')
+        .select('id, status, ai_match_score, updated_at, candidate:candidates(full_name), job:jobs(id, title)')
+        .order('updated_at', { ascending: false })
+        .limit(10),
     ])
     const jobs       = jobsRes.data || []
     const candidates = candidatesRes.data || []
@@ -347,6 +352,33 @@ export const db = {
     const avgScore = scored.length
       ? Math.round(scored.reduce((s: number, a: any) => s + a.ai_match_score, 0) / scored.length)
       : 0
+
+    // ── Recent Activity feed ─────────────────────────────────────
+    const STATUS_META: Record<string, { badge: string; badgeColor: string; title: (n: string, r: string) => string; subtitle: (s?: number) => string }> = {
+      applied:             { badge: 'Applied',      badgeColor: 'bg-gray-100 text-gray-600',      title: (n, r) => `${n} applied for ${r}`,           subtitle: () => 'New application received' },
+      screening:           { badge: 'Pre-Screen',   badgeColor: 'bg-blue-100 text-blue-700',      title: (n, r) => `${n} — pre-screen complete`,       subtitle: (s) => s ? `AI Match Score: ${s}%` : 'Awaiting AI scoring' },
+      shortlisted:         { badge: 'Shortlisted',  badgeColor: 'bg-purple-100 text-purple-700',  title: (n, r) => `${n} shortlisted for ${r}`,        subtitle: () => 'Moved to interview stage' },
+      interview_scheduled: { badge: 'Interview',    badgeColor: 'bg-amber-100 text-amber-700',    title: (n, r) => `Interview scheduled — ${n}`,       subtitle: () => 'Calendar invite sent' },
+      interview_done:      { badge: 'Interviewed',  badgeColor: 'bg-pink-100 text-pink-700',      title: (n, r) => `Interview completed — ${n}`,       subtitle: () => 'Awaiting hiring decision' },
+      offer:               { badge: 'Offer',        badgeColor: 'bg-emerald-100 text-emerald-700',title: (n, r) => `Offer extended to ${n}`,           subtitle: () => 'Pending candidate acceptance' },
+      hired:               { badge: 'Hired 🎉',     badgeColor: 'bg-green-100 text-green-700',    title: (n, r) => `${n} hired — onboarding started`,  subtitle: () => 'Welcome email + checklist sent' },
+    }
+    const recent_activity = (activityRes.data || []).map((a: any) => {
+      const meta  = STATUS_META[a.status] || STATUS_META['applied']
+      const name  = (a.candidate as any)?.full_name || 'Unknown'
+      const role  = (a.job as any)?.title || 'Unknown Role'
+      const jobId = (a.job as any)?.id || ''
+      return {
+        id:         a.id,
+        title:      meta.title(name, role),
+        subtitle:   meta.subtitle(a.ai_match_score),
+        link:       `/candidates/${a.id}`,
+        time:       a.updated_at,
+        badge:      meta.badge,
+        badgeColor: meta.badgeColor,
+      }
+    })
+
     return {
       total_jobs:           jobs.length,
       active_jobs:          jobs.filter((j: any) => j.status === 'active').length,
@@ -358,6 +390,7 @@ export const db = {
       hired_this_month:     apps.filter((a: any) => a.status === 'hired').length,
       avg_match_score:      avgScore,
       pipeline,
+      recent_activity,
     }
   },
 }

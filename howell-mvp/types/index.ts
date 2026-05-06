@@ -78,6 +78,16 @@ export interface Notification {
   created_at: string
 }
 
+export interface ActivityItem {
+  id: string
+  title: string
+  subtitle: string
+  link: string
+  time: string
+  badge: string
+  badgeColor: string
+}
+
 export interface Metrics {
   total_jobs: number
   active_jobs: number
@@ -89,6 +99,7 @@ export interface Metrics {
   hired_this_month: number
   avg_match_score: number
   pipeline: { status: string; label: string; color: string; count: number }[]
+  recent_activity: ActivityItem[]
 }
 
 export interface DemoUser {
