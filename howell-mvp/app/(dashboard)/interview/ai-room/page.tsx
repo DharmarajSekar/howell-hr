@@ -13,6 +13,7 @@ import Link from 'next/link'
 ───────────────────────────────────────────────────────────────────────────── */
 interface Session {
   id: string
+  application_id: string
   status: 'scheduled' | 'in_progress' | 'completed' | 'failed' | 'cancelled'
   tavus_conversation_url: string | null
   tavus_conversation_id: string | null
@@ -199,6 +200,35 @@ function AIRoomContent() {
   const isLive    = session.status === 'in_progress' || session.status === 'scheduled'
   const isDone    = session.status === 'completed'
   const isMock    = !session.tavus_conversation_url
+  const [retrying, setRetrying] = useState(false)
+
+  async function retryWithTavus() {
+    if (!session) return
+    setRetrying(true)
+    try {
+      // Cancel the old session first, then start a fresh one
+      await fetch('/api/interviews/ai-session', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: session.id, status: 'cancelled' }),
+      })
+      const res = await fetch('/api/interviews/start-ai-interview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ applicationId: session.application_id }),
+      })
+      const data = await res.json()
+      if (data.sessionId) {
+        window.location.href = `/interview/ai-room?sessionId=${data.sessionId}`
+      } else {
+        alert(`Tavus error: ${data.error || 'Unknown error'}. Check your TAVUS_API_KEY in Vercel.`)
+      }
+    } catch (e: any) {
+      alert(`Error: ${e.message}`)
+    } finally {
+      setRetrying(false)
+    }
+  }
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
@@ -254,15 +284,26 @@ function AIRoomContent() {
                 </div>
                 <p className="text-lg font-semibold">Demo Mode</p>
                 <p className="text-sm text-gray-400 mt-1 text-center max-w-xs px-4">
-                  Add <code className="bg-gray-800 px-1 rounded text-violet-300">TAVUS_API_KEY</code> to Vercel env vars to enable live AI video interviews.
+                  This session was created before your Tavus API key was set. Click below to start a live session.
                 </p>
+                <button
+                  onClick={retryWithTavus}
+                  disabled={retrying}
+                  className="mt-4 flex items-center gap-2 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white text-sm font-semibold px-5 py-2.5 rounded-xl transition"
+                >
+                  {retrying ? (
+                    <><RefreshCw size={14} className="animate-spin" /> Launching…</>
+                  ) : (
+                    <><Video size={14} /> Start Live AI Interview</>
+                  )}
+                </button>
                 <a
                   href="https://platform.tavus.io"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="mt-4 flex items-center gap-1.5 text-xs text-violet-400 hover:text-violet-300"
+                  className="mt-3 flex items-center gap-1.5 text-xs text-violet-400 hover:text-violet-300"
                 >
-                  Get Tavus API Key <ExternalLink size={11} />
+                  Tavus Dashboard <ExternalLink size={11} />
                 </a>
               </div>
             )}

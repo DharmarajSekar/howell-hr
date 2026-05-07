@@ -189,12 +189,15 @@ Return ONLY a JSON array of 7 strings. Example: ["Q1?", "Q2?", ...]`
 
     // ── 5. Create Tavus conversation ──────────────────────────
     const tavusKey  = process.env.TAVUS_API_KEY
-    const personaId = round.tavus_persona_id || null
+    // Use configured persona, or Tavus's built-in stock replica as fallback
+    const personaId = round.tavus_persona_id || process.env.TAVUS_DEFAULT_PERSONA_ID || null
+    const replicaId = process.env.TAVUS_DEFAULT_REPLICA_ID || personaId || null
 
     let tavusConversationId:  string | null = null
     let tavusConversationUrl: string | null = null
 
-    if (tavusKey && personaId) {
+    // Only require the API key — persona/replica are optional (fallback to env defaults)
+    if (tavusKey) {
       try {
         const context = `You are an AI HR interviewer for Howell conducting a ${round.name} for the role of ${job.title}.
 The candidate's name is ${candidate.full_name}.
@@ -209,26 +212,33 @@ Be encouraging, professional, and make the candidate feel comfortable throughout
         const appBaseUrl  = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
         const webhookUrl  = `${appBaseUrl}/api/interviews/tavus-webhook`
 
+        const body: any = {
+          conversation_name:      `${job.title} — ${candidate.full_name} — ${round.name}`,
+          conversational_context: context,
+          callback_url:           webhookUrl,
+          properties: {
+            max_call_duration:        3600,
+            participant_left_timeout: 60,
+            enable_recording:         true,
+            enable_transcription:     true,
+          },
+        }
+        // Only include replica_id / persona_id if available
+        if (replicaId) body.replica_id = replicaId
+        if (personaId) body.persona_id = personaId
+
         const res = await fetch('https://tavusapi.com/v2/conversations', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-api-key': tavusKey },
-          body: JSON.stringify({
-            replica_id:             personaId,
-            persona_id:             personaId,
-            conversation_name:      `${job.title} — ${candidate.full_name} — ${round.name}`,
-            conversational_context: context,
-            callback_url:           webhookUrl,
-            properties: {
-              max_call_duration:        3600,
-              participant_left_timeout: 60,
-              enable_recording:         true,
-              enable_transcription:     true,
-            },
-          }),
+          body: JSON.stringify(body),
         })
         const tavusData = await res.json()
+        console.log('Tavus response:', JSON.stringify(tavusData))
         tavusConversationId  = tavusData.conversation_id || null
         tavusConversationUrl = tavusData.conversation_url || null
+        if (!tavusConversationId) {
+          console.error('Tavus API error:', tavusData)
+        }
       } catch (e: any) {
         console.error('Tavus error:', e.message)
       }
