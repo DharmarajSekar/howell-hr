@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { createClient } from '@supabase/supabase-js'
+import { createSystemNotification } from '@/lib/notify'
 
 function svc() {
   return createClient(
@@ -127,6 +128,26 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     // 2. Auto-initiate BGV when hired
     if (body.status === 'hired') {
       await autoBGV(candidateName, candidateId, params.id)
+    }
+
+    // 3. System notification for key stage transitions
+    const NOTIF_MAP: Record<string, { title: string; message: string; severity: 'info' | 'warning' | 'critical' }> = {
+      shortlisted:         { severity: 'info',    title: `Shortlisted — ${candidateName}`,           message: `${candidateName} has been shortlisted for ${role}. Interview scheduling can begin.` },
+      interview_scheduled: { severity: 'info',    title: `Interview scheduled — ${candidateName}`,   message: `An interview has been scheduled for ${candidateName} applying for ${role}.` },
+      interview_done:      { severity: 'info',    title: `Interview completed — ${candidateName}`,   message: `${candidateName}'s interview for ${role} is complete. Awaiting panel feedback.` },
+      offer:               { severity: 'info',    title: `Offer extended — ${candidateName}`,        message: `An offer letter has been sent to ${candidateName} for ${role}.` },
+      hired:               { severity: 'info',    title: `🎉 Hired — ${candidateName}`,              message: `${candidateName} has been hired for ${role}. Onboarding has been initiated automatically.` },
+      rejected:            { severity: 'warning', title: `Application rejected — ${candidateName}`,  message: `${candidateName}'s application for ${role} has been rejected.` },
+    }
+    const notifTemplate = NOTIF_MAP[body.status]
+    if (notifTemplate) {
+      createSystemNotification({
+        ...notifTemplate,
+        type:        body.status,
+        link:        `/candidates/${params.id}`,
+        entity_id:   params.id,
+        entity_type: 'application',
+      })
     }
   }
 

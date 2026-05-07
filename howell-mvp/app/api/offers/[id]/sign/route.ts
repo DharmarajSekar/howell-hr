@@ -5,6 +5,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { createSystemNotification } from '@/lib/notify'
 
 export const dynamic = 'force-dynamic'
 
@@ -39,6 +40,18 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       .single()
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+    // System notification — offer accepted
+    createSystemNotification({
+      type:        'offer_accepted',
+      title:       `✅ Offer accepted — ${data?.candidate_name || 'Candidate'}`,
+      message:     `${data?.candidate_name || 'The candidate'} has digitally signed and accepted the offer for ${data?.job_title || 'the role'}. Onboarding can now begin.`,
+      severity:    'info',
+      link:        `/offers`,
+      entity_id:   params.id,
+      entity_type: 'offer',
+    })
+
     return NextResponse.json({ success: true, signed_at: signedAt, offer: data })
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 })

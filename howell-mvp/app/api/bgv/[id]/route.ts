@@ -5,6 +5,7 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { createSystemNotification } from '@/lib/notify'
 
 function svc() {
   return createClient(
@@ -41,27 +42,22 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-    // ── Fire system-wide hiring alert if fraud detected ───────────────────────
+    // ── Fire system-wide alert if fraud detected ─────────────────────────────
     if (body.fraud_flag === true && bgv) {
-      const alertMessage = `🚨 BGV Red Flag — ${bgv.candidate_name} (${bgv.job_title}): ${body.fraud_notes || 'Discrepancy detected during background verification. Manual review required before proceeding with hire.'}`
+      const fraudNote = body.fraud_notes || 'Discrepancy detected during background verification. Manual review required before proceeding with hire.'
 
-      // 1. Post to notifications table
-      await svc()
-        .from('notifications')
-        .insert({
-          type:       'bgv_fraud_alert',
-          title:      `BGV Fraud Alert — ${bgv.candidate_name}`,
-          message:    alertMessage,
-          severity:   'critical',
-          entity_id:  params.id,
-          entity_type:'bgv_record',
-          status:     'sent',
-          sent_at:    new Date().toISOString(),
-        })
-        .select()
-        .single()
+      // 1. Write to system_notifications
+      await createSystemNotification({
+        type:        'bgv_fraud_alert',
+        title:       `🚨 BGV Fraud Alert — ${bgv.candidate_name}`,
+        message:     `BGV Red Flag raised for ${bgv.candidate_name}: ${fraudNote}. Application has been auto-rejected pending review.`,
+        severity:    'critical',
+        link:        `/bgv`,
+        entity_id:   params.id,
+        entity_type: 'bgv_record',
+      })
 
-      // 2. Flag the application status if linked
+      // 2. Auto-reject the application
       if (bgv.application_id) {
         await svc()
           .from('applications')

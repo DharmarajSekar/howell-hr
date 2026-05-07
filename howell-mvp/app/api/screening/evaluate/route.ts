@@ -14,6 +14,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { createSystemNotification } from '@/lib/notify'
 
 export const dynamic = 'force-dynamic'
 
@@ -225,6 +226,43 @@ export async function POST(req: NextRequest) {
             })
           }
         }
+      }
+    }
+
+    // System notification — pre-screen complete
+    if (aiScore > 0) {
+      const candidateName = candidate?.full_name || 'A candidate'
+      const jobTitle      = job?.title || 'an open role'
+      if (autoRejected) {
+        createSystemNotification({
+          type:        'pre_screen_complete',
+          title:       `Pre-screen: ${candidateName} auto-rejected`,
+          message:     `${candidateName} scored ${aiScore}% for ${jobTitle}. Auto-rejected: ${rejectReason || 'below threshold'}.`,
+          severity:    'warning',
+          link:        `/candidates/${applicationId}`,
+          entity_id:   applicationId,
+          entity_type: 'application',
+        })
+      } else if (overallResult === 'pass') {
+        createSystemNotification({
+          type:        'pre_screen_complete',
+          title:       `Pre-screen passed — ${candidateName} (${aiScore}%)`,
+          message:     `${candidateName} scored ${aiScore}% for ${jobTitle} and has been automatically shortlisted for interview.`,
+          severity:    'info',
+          link:        `/candidates/${applicationId}`,
+          entity_id:   applicationId,
+          entity_type: 'application',
+        })
+      } else {
+        createSystemNotification({
+          type:        'pre_screen_complete',
+          title:       `Pre-screen complete — ${candidateName} (${aiScore}%)`,
+          message:     `${candidateName} scored ${aiScore}% for ${jobTitle}. Manual review recommended before proceeding.`,
+          severity:    'info',
+          link:        `/candidates/${applicationId}`,
+          entity_id:   applicationId,
+          entity_type: 'application',
+        })
       }
     }
 

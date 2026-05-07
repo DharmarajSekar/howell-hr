@@ -1,7 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { cn } from '@/lib/utils'
 import {
   LayoutDashboard, Briefcase, Users, Calendar, Bell, LogOut,
@@ -61,8 +61,9 @@ const SECTIONS = [
   {
     label: 'Communication',
     items: [
-      { href: '/communications', label: 'Messages',      icon: MessageSquare },
-      { href: '/notifications',  label: 'Notifications', icon: Bell },
+      { href: '/system-notifications', label: 'System Alerts',      icon: Bell },
+      { href: '/communications',       label: 'Messages',           icon: MessageSquare },
+      { href: '/notifications',        label: 'Candidate Msgs',     icon: Bell },
     ]
   },
   {
@@ -78,7 +79,22 @@ const SECTIONS = [
 export default function Sidebar() {
   const pathname = usePathname()
   const router   = useRouter()
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  const [collapsed,    setCollapsed]    = useState<Record<string, boolean>>({})
+  const [unreadCount,  setUnreadCount]  = useState(0)
+
+  // Poll unread system-notification count every 30 s
+  useEffect(() => {
+    async function fetchUnread() {
+      try {
+        const res  = await fetch('/api/system-notifications?unread=true&limit=50', { cache: 'no-store' })
+        const data = await res.json()
+        setUnreadCount(Array.isArray(data) ? data.length : 0)
+      } catch { /* non-fatal */ }
+    }
+    fetchUnread()
+    const id = setInterval(fetchUnread, 30_000)
+    return () => clearInterval(id)
+  }, [])
 
   async function handleLogout() {
     await fetch('/api/auth/logout', { method: 'POST' })
@@ -139,7 +155,12 @@ export default function Sidebar() {
                       >
                         <item.icon size={16} className="flex-shrink-0"/>
                         <span className="flex-1 truncate">{item.label}</span>
-                        {(item as any).badge === '' && !active && (
+                        {item.href === '/system-notifications' && unreadCount > 0 && (
+                          <span className="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center">
+                            {unreadCount > 99 ? '99+' : unreadCount}
+                          </span>
+                        )}
+                        {(item as any).badge === '' && !active && item.href !== '/system-notifications' && (
                           <span className="text-xs bg-red-900 text-red-300 px-1 py-0.5 rounded text-[10px] font-bold">AI</span>
                         )}
                       </Link>

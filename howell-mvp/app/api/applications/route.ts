@@ -1,6 +1,7 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { createSystemNotification } from '@/lib/notify'
 
 export async function GET(req: Request) {
   const jobId = new URL(req.url).searchParams.get('job_id')
@@ -20,6 +21,19 @@ export async function POST(req: NextRequest) {
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ applicationId: app.id }),
     }).catch(err => console.error('Auto-screening error (non-fatal):', err.message))
+
+    // System notification — new application received
+    const candidateName = body.candidate_name || body.name || 'A candidate'
+    const jobTitle      = body.job_title      || body.role || 'an open role'
+    createSystemNotification({
+      type:        'new_application',
+      title:       `New application — ${jobTitle}`,
+      message:     `${candidateName} has applied for ${jobTitle}. AI screening is running in the background.`,
+      severity:    'info',
+      link:        `/candidates/${app.id}`,
+      entity_id:   app.id,
+      entity_type: 'application',
+    })
   }
 
   return NextResponse.json(app, { status: 201 })
