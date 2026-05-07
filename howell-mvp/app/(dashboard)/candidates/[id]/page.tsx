@@ -28,9 +28,24 @@ export default function CandidateDetailPage() {
       fetch('/api/candidates').then(r => r.json()),
       fetch('/api/applications').then(r => r.json()),
     ])
-    const cand = candRes.find((c: Candidate) => c.id === id)
+    // Try matching by candidate ID first; fall back to matching by application ID
+    // (old notifications linked to application ID instead of candidate ID)
+    let cand = candRes.find((c: Candidate) => c.id === id)
+    let candidateApps = appsRes.filter((a: Application) => a.candidate_id === id)
+
+    if (!cand) {
+      // Maybe 'id' is actually an application ID — look up the candidate from that app
+      const matchedApp = appsRes.find((a: Application) => a.id === id)
+      if (matchedApp) {
+        const resolvedCandidateId = matchedApp.candidate_id || matchedApp.candidate?.id
+        cand = candRes.find((c: Candidate) => c.id === resolvedCandidateId)
+        candidateApps = appsRes.filter((a: Application) =>
+          a.candidate_id === resolvedCandidateId || a.candidate?.id === resolvedCandidateId
+        )
+      }
+    }
+
     setCandidate(cand || null)
-    const candidateApps = appsRes.filter((a: Application) => a.candidate_id === id)
     setApps(candidateApps)
 
     // Load AI sessions for all applications of this candidate

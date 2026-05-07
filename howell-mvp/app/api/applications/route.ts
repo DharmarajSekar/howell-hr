@@ -30,12 +30,14 @@ export async function POST(req: NextRequest) {
     // System notification — new application received
     const candidateName = body.candidate_name || body.name || 'A candidate'
     const jobTitle      = body.job_title      || body.role || 'an open role'
+    // Use candidate_id for the link so the candidate profile page loads correctly
+    const candidateId   = app.candidate_id || body.candidate_id
     createSystemNotification({
       type:        'new_application',
       title:       `New application — ${jobTitle}`,
       message:     `${candidateName} has applied for ${jobTitle}. AI screening is running in the background.`,
       severity:    'info',
-      link:        `/candidates/${app.id}`,
+      link:        candidateId ? `/candidates/${candidateId}` : `/candidates`,
       entity_id:   app.id,
       entity_type: 'application',
     })

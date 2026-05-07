@@ -118,9 +118,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   // Fire side-effects when status changes
   if (body.status && currentApp && body.status !== currentApp.status) {
-    const candidateName = currentApp.candidate_name || currentApp.name || 'Candidate'
-    const candidateId   = currentApp.candidate_id || null
-    const role          = currentApp.job_title || currentApp.role || 'the role'
+    const candidateName = currentApp.candidate_name || currentApp.candidate?.full_name || currentApp.name || 'Candidate'
+    const candidateId   = currentApp.candidate_id || currentApp.candidate?.id || null
+    const role          = currentApp.job_title || currentApp.job?.title || currentApp.role || 'the role'
 
     // 1. Auto-message candidate
     await fireAutoMessage(candidateName, candidateId, params.id, body.status, role)
@@ -199,7 +199,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       createSystemNotification({
         ...notifTemplate,
         type:        body.status,
-        link:        `/candidates/${params.id}`,
+        // Link to candidate profile (candidate ID), not application ID
+        link:        candidateId ? `/candidates/${candidateId}` : `/candidates`,
         entity_id:   params.id,
         entity_type: 'application',
       })
