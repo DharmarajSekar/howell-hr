@@ -564,29 +564,46 @@ export default function TalentPoolClient() {
       {/* ── Similar Candidates Modal ────────────────────────── */}
       {showSimilar && similarTarget && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl">
-            <div className="p-6 border-b border-gray-100 flex items-center justify-between">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[90vh] flex flex-col">
+
+            {/* Header */}
+            <div className="p-6 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
               <div>
                 <h2 className="text-lg font-bold text-gray-900">Similar Candidates</h2>
-                <p className="text-sm text-gray-500 mt-0.5">Profiles similar to <strong>{similarTarget.full_name}</strong></p>
+                <p className="text-sm text-gray-500 mt-0.5">
+                  Profiles similar to <strong>{similarTarget.full_name}</strong>
+                </p>
               </div>
-              <button onClick={() => setShowSimilar(false)} className="text-gray-400 hover:text-gray-600"><X size={20}/></button>
+              <button onClick={() => setShowSimilar(false)} className="text-gray-400 hover:text-gray-600 transition">
+                <X size={20}/>
+              </button>
             </div>
-            <div className="p-6">
+
+            {/* List */}
+            <div className="p-6 overflow-y-auto flex-1">
               {similarCandidates.length === 0 ? (
                 <div className="text-center py-8 text-sm text-gray-400">
                   No similar profiles found in your current talent pool.
                 </div>
               ) : (
-                <div className="space-y-2">
-                  <p className="text-xs text-gray-500 mb-3">{similarCandidates.length} similar profiles found</p>
+                <div className="space-y-3">
+                  <p className="text-xs text-gray-500 mb-1">{similarCandidates.length} similar profiles found</p>
                   {similarCandidates.map((c: any) => (
-                    <div key={c.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl border border-gray-100">
+                    <div key={c.id}
+                      className="flex items-center gap-3 p-3 bg-gray-50 hover:bg-blue-50 rounded-xl border border-gray-100 hover:border-blue-200 transition group cursor-pointer"
+                      onClick={() => {
+                        setSelected(c)
+                        setShowSimilar(false)
+                      }}
+                    >
+                      {/* Avatar */}
                       <div className="w-9 h-9 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-bold text-sm flex-shrink-0">
                         {c.full_name?.charAt(0)}
                       </div>
-                      <div className="flex-1">
-                        <div className="font-medium text-sm text-gray-900">{c.full_name}</div>
+
+                      {/* Info */}
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-sm text-gray-900 group-hover:text-blue-700 transition">{c.full_name}</div>
                         <div className="text-xs text-gray-500">{c.current_title} · {c.experience_years}y · {c.location}</div>
                         <div className="flex flex-wrap gap-1 mt-1">
                           {(c.skills || []).slice(0, 3).map((s: string) => (
@@ -594,18 +611,40 @@ export default function TalentPoolClient() {
                           ))}
                         </div>
                       </div>
-                      <div className="text-right">
-                        <div className={`text-sm font-bold ${c.similarScore>=70?'text-green-600':c.similarScore>=50?'text-yellow-600':'text-gray-500'}`}>{c.similarScore}%</div>
-                        <div className="text-xs text-gray-400">similar</div>
+
+                      {/* Score + View button */}
+                      <div className="flex flex-col items-end gap-2 flex-shrink-0">
+                        <div className="text-right">
+                          <div className={`text-sm font-bold ${c.similarScore>=70?'text-green-600':c.similarScore>=50?'text-yellow-600':'text-gray-500'}`}>
+                            {c.similarScore}%
+                          </div>
+                          <div className="text-xs text-gray-400">similar</div>
+                        </div>
+                        <span className="text-xs text-blue-600 font-medium opacity-0 group-hover:opacity-100 transition flex items-center gap-1">
+                          View Profile →
+                        </span>
                       </div>
                     </div>
                   ))}
                 </div>
               )}
             </div>
-            <div className="p-6 border-t border-gray-100">
-              <button onClick={() => setShowSimilar(false)}
-                className="w-full border border-gray-300 text-gray-700 py-2.5 rounded-lg text-sm font-medium hover:bg-gray-50 transition">Close</button>
+
+            {/* Footer */}
+            <div className="p-6 border-t border-gray-100 flex gap-3 flex-shrink-0">
+              {/* Back to original candidate */}
+              <button
+                onClick={() => { setSelected(similarTarget); setShowSimilar(false) }}
+                className="flex-1 flex items-center justify-center gap-2 border border-gray-300 text-gray-700 py-2.5 rounded-lg text-sm font-medium hover:bg-gray-50 transition"
+              >
+                ← Back to {similarTarget.full_name?.split(' ')[0]}
+              </button>
+              <button
+                onClick={() => setShowSimilar(false)}
+                className="px-5 border border-gray-200 text-gray-500 py-2.5 rounded-lg text-sm hover:bg-gray-50 transition"
+              >
+                Close
+              </button>
             </div>
           </div>
         </div>
