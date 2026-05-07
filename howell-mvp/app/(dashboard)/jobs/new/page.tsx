@@ -1,7 +1,7 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { Sparkles, Loader2, ArrowLeft, Zap } from 'lucide-react'
+import { Sparkles, Loader2, ArrowLeft, Zap, CheckCircle, CloudOff } from 'lucide-react'
 import Link from 'next/link'
 import SkillPicker from '@/components/jobs/SkillPicker'
 import { suggestCategoriesForTitle } from '@/lib/skill-master'
@@ -36,6 +36,8 @@ const LOCATIONS = [
 
 const EMP_TYPES = ['Full-time', 'Contract', 'Part-time', 'Freelance', 'Internship']
 
+type DraftStatus = 'idle' | 'saving' | 'saved' | 'error'
+
 export default function NewJobPage() {
   const router = useRouter()
   const [form, setForm] = useState({
@@ -43,16 +45,79 @@ export default function NewJobPage() {
     employment_type: EMP_TYPES[0], experience_min: 3, experience_max: 7,
     salary_min: '', salary_max: '',
     description: '', requirements: '', nice_to_have: '',
-    status: 'active',
+    status: 'draft',
   })
-  const [skills,     setSkills]     = useState<string[]>([])
-  const [generating, setGenerating] = useState(false)
-  const [saving,     setSaving]     = useState(false)
+  const [skills,      setSkills]      = useState<string[]>([])
+  const [generating,  setGenerating]  = useState(false)
+  const [saving,      setSaving]      = useState(false)
+  const [draftId,     setDraftId]     = useState<string | null>(null)
+  const [draftStatus, setDraftStatus] = useState<DraftStatus>('idle')
+
+  const debounceRef  = useRef<NodeJS.Timeout | null>(null)
+  const draftIdRef   = useRef<string | null>(null)  // stable ref for async callbacks
+
+  // Keep ref in sync with state
+  useEffect(() => { draftIdRef.current = draftId }, [draftId])
 
   function set(key: string, val: any) {
     setForm(f => ({ ...f, [key]: val }))
   }
 
+  // ── Auto-save draft ──────────────────────────────────────────────────────
+  const saveDraft = useCallback(async (formData: typeof form, skillsData: string[]) => {
+    if (!formData.title.trim()) return   // need at least a title
+
+    setDraftStatus('saving')
+    try {
+      const payload = {
+        ...formData,
+        skills:         skillsData,
+        status:         'draft',
+        experience_min: Number(formData.experience_min),
+        experience_max: Number(formData.experience_max),
+        salary_min:     formData.salary_min ? Number(formData.salary_min) : undefined,
+        salary_max:     formData.salary_max ? Number(formData.salary_max) : undefined,
+      }
+
+      const currentId = draftIdRef.current
+
+      if (currentId) {
+        // Already saved once — just PATCH it
+        await fetch(`/api/jobs/${currentId}`, {
+          method:  'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify(payload),
+        })
+      } else {
+        // First save — create a new draft
+        const res  = await fetch('/api/jobs', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify(payload),
+        })
+        const data = await res.json()
+        if (data?.id) {
+          setDraftId(data.id)
+          draftIdRef.current = data.id
+        }
+      }
+      setDraftStatus('saved')
+    } catch {
+      setDraftStatus('error')
+    }
+  }, [])
+
+  // Debounce auto-save: 2.5s after last change
+  useEffect(() => {
+    if (!form.title.trim()) return
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => {
+      saveDraft(form, skills)
+    }, 2500)
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
+  }, [form, skills, saveDraft])
+
+  // ── AI JD generation ─────────────────────────────────────────────────────
   async function generateJD() {
     if (!form.title) return alert('Please enter a job title first')
     setGenerating(true)
@@ -72,29 +137,51 @@ export default function NewJobPage() {
     setGenerating(false)
   }
 
+  // ── Save as draft (manual) ────────────────────────────────────────────────
+  async function handleSaveDraft() {
+    await saveDraft(form, skills)
+    router.push('/jobs')
+  }
+
+  // ── Publish ───────────────────────────────────────────────────────────────
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setSaving(true)
     try {
-      const res = await fetch('/api/jobs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...form,
-          skills,
-          experience_min: Number(form.experience_min),
-          experience_max: Number(form.experience_max),
-          salary_min: form.salary_min ? Number(form.salary_min) : undefined,
-          salary_max: form.salary_max ? Number(form.salary_max) : undefined,
-        }),
-      })
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}))
-        alert(`Failed to publish job: ${err.error || res.statusText}`)
-        setSaving(false)
-        return
+      const payload = {
+        ...form,
+        skills,
+        status:         'active',
+        experience_min: Number(form.experience_min),
+        experience_max: Number(form.experience_max),
+        salary_min:     form.salary_min ? Number(form.salary_min) : undefined,
+        salary_max:     form.salary_max ? Number(form.salary_max) : undefined,
       }
-      // Bust Next.js router cache so /jobs re-fetches from DB
+
+      const currentId = draftIdRef.current
+
+      if (currentId) {
+        // Promote existing draft to active
+        await fetch(`/api/jobs/${currentId}`, {
+          method:  'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ status: 'active' }),
+        })
+      } else {
+        // No draft yet — create directly as active
+        const res = await fetch('/api/jobs', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify(payload),
+        })
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}))
+          alert(`Failed to publish job: ${err.error || res.statusText}`)
+          setSaving(false)
+          return
+        }
+      }
+
       router.refresh()
       router.push('/jobs')
     } catch (err: any) {
@@ -103,17 +190,49 @@ export default function NewJobPage() {
     }
   }
 
+  // ── Draft status indicator ────────────────────────────────────────────────
+  const DraftBadge = () => {
+    if (draftStatus === 'idle') return null
+    if (draftStatus === 'saving') return (
+      <span className="flex items-center gap-1.5 text-xs text-gray-400">
+        <Loader2 size={12} className="animate-spin"/> Saving draft…
+      </span>
+    )
+    if (draftStatus === 'saved') return (
+      <span className="flex items-center gap-1.5 text-xs text-green-600">
+        <CheckCircle size={12}/> Draft saved
+      </span>
+    )
+    return (
+      <span className="flex items-center gap-1.5 text-xs text-red-500">
+        <CloudOff size={12}/> Save failed
+      </span>
+    )
+  }
+
   return (
     <div className="p-8 max-w-3xl mx-auto">
-      <div className="flex items-center gap-3 mb-6">
-        <Link href="/jobs" className="text-gray-400 hover:text-gray-700 transition">
-          <ArrowLeft size={20}/>
-        </Link>
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Create Job Posting</h1>
-          <p className="text-gray-500 text-sm">Use AI to generate a compelling job description</p>
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center gap-3">
+          <Link href="/jobs" className="text-gray-400 hover:text-gray-700 transition">
+            <ArrowLeft size={20}/>
+          </Link>
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Create Job Posting</h1>
+            <p className="text-gray-500 text-sm">Use AI to generate a compelling job description</p>
+          </div>
         </div>
+        {/* Draft status pill */}
+        <DraftBadge />
       </div>
+
+      {/* Draft saved banner */}
+      {draftId && draftStatus === 'saved' && (
+        <div className="mb-4 flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-4 py-2.5 text-sm text-green-700">
+          <CheckCircle size={15}/>
+          <span>Draft auto-saved — you can navigate away and come back to finish later.</span>
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} className="space-y-6">
 
@@ -187,7 +306,7 @@ export default function NewJobPage() {
             <div>
               <h2 className="font-semibold text-gray-900">Required Skills</h2>
               <p className="text-xs text-gray-500 mt-0.5">
-                Pick from the master or type a custom skill. Skills are used for AI candidate matching, sourcing queries, and interview question generation.
+                Pick from the master or type a custom skill. Used for AI candidate matching, sourcing and interview question generation.
               </p>
             </div>
             {form.title && (
@@ -196,22 +315,14 @@ export default function NewJobPage() {
               </div>
             )}
           </div>
-
-          <SkillPicker
-            selected={skills}
-            onChange={setSkills}
-            jobTitle={form.title}
-          />
+          <SkillPicker selected={skills} onChange={setSkills} jobTitle={form.title} />
         </div>
 
         {/* ── Job Description ──────────────────────────── */}
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6 space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="font-semibold text-gray-900">Job Description</h2>
-            <button
-              type="button"
-              onClick={generateJD}
-              disabled={generating}
+            <button type="button" onClick={generateJD} disabled={generating}
               className="flex items-center gap-2 text-sm font-medium text-red-700 hover:text-red-800 border border-red-200 hover:border-red-300 px-3 py-1.5 rounded-lg transition disabled:opacity-60">
               {generating ? <Loader2 size={15} className="animate-spin"/> : <Sparkles size={15}/>}
               {generating ? 'Generating…' : 'Generate with AI'}
@@ -244,11 +355,15 @@ export default function NewJobPage() {
           </div>
         </div>
 
+        {/* ── Action buttons ───────────────────────────── */}
         <div className="flex gap-3">
-          <Link href="/jobs"
-            className="flex-1 text-center py-3 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition">
-            Cancel
-          </Link>
+          <button
+            type="button"
+            onClick={handleSaveDraft}
+            className="flex-1 text-center py-3 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition"
+          >
+            {draftId ? 'Saved as Draft ✓' : 'Save as Draft'}
+          </button>
           <button type="submit" disabled={saving}
             className="flex-1 bg-red-700 hover:bg-red-800 text-white py-3 rounded-lg text-sm font-semibold transition disabled:opacity-60">
             {saving ? 'Publishing…' : `Publish Job${skills.length > 0 ? ` · ${skills.length} skills` : ''}`}

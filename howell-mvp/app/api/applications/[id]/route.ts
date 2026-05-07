@@ -128,6 +128,29 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     // 2. Auto-initiate BGV when hired
     if (body.status === 'hired') {
       await autoBGV(candidateName, candidateId, params.id)
+
+      // 2b. Auto-close the job posting so no more applications come in
+      const jobId = currentApp.job_id || currentApp.job?.id
+      if (jobId) {
+        try {
+          await svc()
+            .from('jobs')
+            .update({ status: 'closed', updated_at: new Date().toISOString() })
+            .eq('id', jobId)
+
+          createSystemNotification({
+            type:        'job_closed',
+            title:       `Job closed — ${role}`,
+            message:     `${candidateName} was hired for ${role}. The job posting has been automatically closed to stop new applications.`,
+            severity:    'info',
+            link:        `/jobs`,
+            entity_id:   jobId,
+            entity_type: 'job',
+          })
+        } catch (e) {
+          console.error('Auto-close job failed (non-fatal):', e)
+        }
+      }
     }
 
     // 3. System notification for key stage transitions
