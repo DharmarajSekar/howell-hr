@@ -474,12 +474,67 @@ export default function KanbanBoard({ applications, rejectedApplications = [] }:
   const [blindMode,    setBlindMode]    = useState(false)
   const [showAddModal, setShowAddModal] = useState(false)
 
+  // ── Drag-and-drop state ──────────────────────────────────────────────────
+  const [localApps,    setLocalApps]    = useState<Application[]>(applications)
+  const [dragAppId,    setDragAppId]    = useState<string | null>(null)
+  const [dragOverStage,setDragOverStage]= useState<string | null>(null)
+  const [moving,       setMoving]       = useState<string | null>(null) // appId being saved
+
+  // Sync when server data changes (e.g. after add-candidate reload)
+  useEffect(() => { setLocalApps(applications) }, [applications])
+
   const byStage = PIPELINE_STAGES.reduce((acc, stage) => {
-    acc[stage] = applications
+    acc[stage] = localApps
       .filter(a => a.status === stage)
       .sort((a, b) => (b.ai_match_score || 0) - (a.ai_match_score || 0))
     return acc
   }, {} as Record<string, Application[]>)
+
+  // ── Drag handlers ────────────────────────────────────────────────────────
+  function handleDragStart(e: React.DragEvent, appId: string) {
+    setDragAppId(appId)
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', appId)
+  }
+
+  function handleDragOver(e: React.DragEvent, stage: string) {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    setDragOverStage(stage)
+  }
+
+  function handleDragLeave() {
+    setDragOverStage(null)
+  }
+
+  async function handleDrop(e: React.DragEvent, targetStage: string) {
+    e.preventDefault()
+    setDragOverStage(null)
+    const appId = dragAppId || e.dataTransfer.getData('text/plain')
+    if (!appId) return
+
+    const app = localApps.find(a => a.id === appId)
+    if (!app || app.status === targetStage) { setDragAppId(null); return }
+
+    // Optimistically update UI
+    setLocalApps(prev => prev.map(a => a.id === appId ? { ...a, status: targetStage } : a))
+    setDragAppId(null)
+    setMoving(appId)
+
+    try {
+      const res = await fetch(`/api/applications/${appId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: targetStage }),
+      })
+      if (!res.ok) throw new Error('Failed to update')
+    } catch {
+      // Revert on error
+      setLocalApps(prev => prev.map(a => a.id === appId ? { ...a, status: app.status } : a))
+    } finally {
+      setMoving(null)
+    }
+  }
 
   return (
     <div>
@@ -502,7 +557,7 @@ export default function KanbanBoard({ applications, rejectedApplications = [] }:
             }`}>
             Active Pipeline
             <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${activeTab === 'pipeline' ? 'bg-red-100 text-red-600' : 'bg-gray-200 text-gray-500'}`}>
-              {applications.length}
+              {localApps.length}
             </span>
           </button>
           <button
@@ -555,9 +610,15 @@ export default function KanbanBoard({ applications, rejectedApplications = [] }:
       {activeTab === 'pipeline' && (
         <div className="flex gap-3 overflow-x-auto pb-4">
           {PIPELINE_STAGES.map(stage => {
-            const cards = byStage[stage] || []
+            const cards    = byStage[stage] || []
+            const isTarget = dragOverStage === stage && dragAppId !== null
+
             return (
-              <div key={stage} className="flex-shrink-0 w-56">
+              <div key={stage} className="flex-shrink-0 w-56"
+                onDragOver={e => handleDragOver(e, stage)}
+                onDragLeave={handleDragLeave}
+                onDrop={e => handleDrop(e, stage)}>
+
                 {/* Column Header */}
                 <div className={`flex items-center justify-between px-3 py-2 rounded-t-lg mb-1 ${HEADER_COLORS[stage]}`}>
                   <span className="text-xs font-semibold">{STATUS_LABELS[stage]}</span>
@@ -565,26 +626,41 @@ export default function KanbanBoard({ applications, rejectedApplications = [] }:
                 </div>
 
                 {/* Cards */}
-                <div className={`rounded-b-lg border min-h-24 p-2 space-y-2 ${STAGE_COLORS[stage]}`}>
+                <div className={`rounded-b-lg border min-h-24 p-2 space-y-2 transition-all ${STAGE_COLORS[stage]} ${
+                  isTarget ? 'ring-2 ring-blue-400 ring-offset-1 bg-blue-50/60' : ''
+                }`}>
                   {cards.length === 0 && (
-                    <p className="text-center text-xs text-gray-400 py-4">Empty</p>
+                    <p className={`text-center text-xs py-4 ${isTarget ? 'text-blue-400 font-medium' : 'text-gray-400'}`}>
+                      {isTarget ? 'Drop here' : 'Empty'}
+                    </p>
                   )}
                   {cards.map((app, idx) => {
                     const displayName  = blindMode ? anonymousLabel(app.candidate?.id || app.id) : app.candidate?.full_name
                     const displayTitle = blindMode ? '— title hidden —' : app.candidate?.current_title
                     const avatarChar   = blindMode ? '?' : (app.candidate?.full_name?.charAt(0) || '?')
+                    const isDragging   = dragAppId === app.id
+                    const isSaving     = moving === app.id
 
                     return (
-                      <div key={app.id} className="relative">
+                      <div key={app.id} className="relative"
+                        draggable={!blindMode}
+                        onDragStart={e => handleDragStart(e, app.id)}
+                        onDragEnd={() => { setDragAppId(null); setDragOverStage(null) }}
+                        style={{ opacity: isDragging ? 0.4 : 1 }}>
                         {idx === 0 && app.ai_match_score && app.ai_match_score >= 70 && cards.length > 1 && (
                           <div className="absolute -top-1 -right-1 w-4 h-4 bg-amber-400 rounded-full flex items-center justify-center z-10">
                             <span className="text-[8px] font-black text-white">1</span>
                           </div>
                         )}
+                        {isSaving && (
+                          <div className="absolute inset-0 bg-white/70 rounded-lg flex items-center justify-center z-20">
+                            <Loader2 size={14} className="animate-spin text-blue-500"/>
+                          </div>
+                        )}
                         <Link
                           href={blindMode ? '#' : `/candidates/${app.candidate?.id}`}
                           onClick={blindMode ? (e) => e.preventDefault() : undefined}
-                          className={`block bg-white rounded-lg border border-gray-100 p-3 shadow-sm hover:shadow-md transition ${blindMode ? 'cursor-default' : ''}`}>
+                          className={`block bg-white rounded-lg border border-gray-100 p-3 shadow-sm hover:shadow-md transition ${blindMode ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'}`}>
 
                           <div className="flex items-start justify-between gap-1 mb-1">
                             <div className="flex items-center gap-1.5">
@@ -621,6 +697,12 @@ export default function KanbanBoard({ applications, rejectedApplications = [] }:
                       </div>
                     )
                   })}
+                  {/* Drop zone indicator when column has cards */}
+                  {cards.length > 0 && isTarget && (
+                    <div className="border-2 border-dashed border-blue-400 rounded-lg h-10 flex items-center justify-center">
+                      <span className="text-xs text-blue-400 font-medium">Drop here</span>
+                    </div>
+                  )}
                 </div>
               </div>
             )

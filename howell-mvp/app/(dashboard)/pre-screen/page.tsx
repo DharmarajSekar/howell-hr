@@ -7,9 +7,9 @@ export default async function PreScreenPage() {
     db.preScreen.allSessions(),
     db.applications.all(),
   ])
-  // Only show applications that don't have a session yet or are shortlisted+
+  // Show all active pipeline candidates so HR can pre-screen at any stage
   const eligible = applications.filter((a: any) =>
-    ['shortlisted','interview_scheduled','interview_done','screening'].includes(a.status)
+    ['applied','shortlisted','interview_scheduled','interview_done','screening'].includes(a.status)
   )
   return <PreScreenClient sessions={sessions} applications={eligible} />
 }

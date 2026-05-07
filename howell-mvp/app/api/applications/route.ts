@@ -4,8 +4,13 @@ import { db } from '@/lib/db'
 import { createSystemNotification } from '@/lib/notify'
 
 export async function GET(req: Request) {
-  const jobId = new URL(req.url).searchParams.get('job_id')
-  return NextResponse.json(jobId ? await db.applications.forJob(jobId) : await db.applications.all())
+  const url    = new URL(req.url)
+  const jobId  = url.searchParams.get('job_id')
+  const status = url.searchParams.get('status')
+  if (jobId) return NextResponse.json(await db.applications.forJob(jobId))
+  const all = await db.applications.all()
+  if (status) return NextResponse.json(all.filter((a: any) => a.status === status))
+  return NextResponse.json(all)
 }
 
 export async function POST(req: NextRequest) {
