@@ -16,6 +16,8 @@ interface Job {
   salary_min?: number
   salary_max?: number
   status: 'active' | 'draft' | 'paused' | 'closed'
+  openings: number
+  positions_filled: number
   created_at: string
 }
 
@@ -266,6 +268,37 @@ export default function JobsPage() {
                   />
                 </div>
               </div>
+
+              {/* Openings progress bar */}
+              {job.status !== 'draft' && (
+                <div className="mt-3">
+                  {(() => {
+                    const total    = job.openings        || 1
+                    const filled   = job.positions_filled || 0
+                    const open     = Math.max(0, total - filled)
+                    const pct      = Math.min(100, Math.round((filled / total) * 100))
+                    const allFilled = open === 0
+                    return (
+                      <div>
+                        <div className="flex items-center justify-between text-xs mb-1">
+                          <span className={`font-medium ${allFilled ? 'text-red-600' : 'text-gray-600'}`}>
+                            {allFilled
+                              ? '⚠ All positions filled — job closed'
+                              : `${open} of ${total} position${total > 1 ? 's' : ''} open`}
+                          </span>
+                          <span className="text-gray-400">{filled}/{total} hired</span>
+                        </div>
+                        <div className="w-full bg-gray-100 rounded-full h-1.5">
+                          <div
+                            className={`h-1.5 rounded-full transition-all ${allFilled ? 'bg-red-500' : pct >= 75 ? 'bg-amber-400' : 'bg-green-500'}`}
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                      </div>
+                    )
+                  })()}
+                </div>
+              )}
 
               <div className="mt-3 pt-3 border-t border-gray-50 flex items-center gap-3 text-xs text-gray-400">
                 <span>{job.employment_type}</span>

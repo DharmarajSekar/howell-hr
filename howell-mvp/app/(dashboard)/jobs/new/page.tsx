@@ -45,6 +45,7 @@ export default function NewJobPage() {
     employment_type: EMP_TYPES[0], experience_min: 3, experience_max: 7,
     salary_min: '', salary_max: '',
     description: '', requirements: '', nice_to_have: '',
+    openings: 1,
     status: 'draft',
   })
   const [skills,      setSkills]      = useState<string[]>([])
@@ -71,12 +72,14 @@ export default function NewJobPage() {
     try {
       const payload = {
         ...formData,
-        skills:         skillsData,
-        status:         'draft',
-        experience_min: Number(formData.experience_min),
-        experience_max: Number(formData.experience_max),
-        salary_min:     formData.salary_min ? Number(formData.salary_min) : undefined,
-        salary_max:     formData.salary_max ? Number(formData.salary_max) : undefined,
+        skills:            skillsData,
+        status:            'draft',
+        openings:          Number(formData.openings) || 1,
+        positions_filled:  0,
+        experience_min:    Number(formData.experience_min),
+        experience_max:    Number(formData.experience_max),
+        salary_min:        formData.salary_min ? Number(formData.salary_min) : undefined,
+        salary_max:        formData.salary_max ? Number(formData.salary_max) : undefined,
       }
 
       const currentId = draftIdRef.current
@@ -296,6 +299,17 @@ export default function NewJobPage() {
                   onChange={e => set('salary_max', e.target.value)}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"/>
               </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Number of Openings
+                <span className="ml-1.5 text-xs font-normal text-gray-400">Job auto-closes when all positions are filled</span>
+              </label>
+              <input
+                type="number" min={1} max={100} value={form.openings}
+                onChange={e => set('openings', Math.max(1, parseInt(e.target.value) || 1))}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+              />
             </div>
           </div>
         </div>

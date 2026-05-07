@@ -129,26 +129,58 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (body.status === 'hired') {
       await autoBGV(candidateName, candidateId, params.id)
 
-      // 2b. Auto-close the job posting so no more applications come in
+      // 2b. Increment positions_filled; auto-close only when all positions are filled
       const jobId = currentApp.job_id || currentApp.job?.id
       if (jobId) {
         try {
-          await svc()
+          // Fetch current job openings state
+          const { data: job } = await svc()
             .from('jobs')
-            .update({ status: 'closed', updated_at: new Date().toISOString() })
+            .select('openings, positions_filled, title')
             .eq('id', jobId)
+            .single()
 
-          createSystemNotification({
-            type:        'job_closed',
-            title:       `Job closed — ${role}`,
-            message:     `${candidateName} was hired for ${role}. The job posting has been automatically closed to stop new applications.`,
-            severity:    'info',
-            link:        `/jobs`,
-            entity_id:   jobId,
-            entity_type: 'job',
-          })
+          if (job) {
+            const newFilled = (job.positions_filled || 0) + 1
+            const openings  = job.openings || 1
+            const allFilled = newFilled >= openings
+            const remaining = openings - newFilled
+
+            await svc()
+              .from('jobs')
+              .update({
+                positions_filled: newFilled,
+                status:           allFilled ? 'closed' : undefined,
+                updated_at:       new Date().toISOString(),
+              })
+              .eq('id', jobId)
+
+            if (allFilled) {
+              // All seats filled — auto-close
+              createSystemNotification({
+                type:        'job_closed',
+                title:       `All positions filled — ${job.title || role}`,
+                message:     `${candidateName} was the last hire for ${role}. All ${openings} position${openings > 1 ? 's' : ''} are now filled. Job posting has been automatically closed.`,
+                severity:    'info',
+                link:        `/jobs`,
+                entity_id:   jobId,
+                entity_type: 'job',
+              })
+            } else {
+              // Partial hire — notify remaining seats
+              createSystemNotification({
+                type:        'position_filled',
+                title:       `Position filled — ${remaining} remaining for ${role}`,
+                message:     `${candidateName} was hired for ${role}. ${newFilled}/${openings} positions filled. ${remaining} seat${remaining > 1 ? 's' : ''} still open.`,
+                severity:    'info',
+                link:        `/jobs`,
+                entity_id:   jobId,
+                entity_type: 'job',
+              })
+            }
+          }
         } catch (e) {
-          console.error('Auto-close job failed (non-fatal):', e)
+          console.error('Position tracking failed (non-fatal):', e)
         }
       }
     }
