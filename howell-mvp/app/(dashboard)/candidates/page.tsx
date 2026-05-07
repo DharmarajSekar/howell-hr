@@ -4,10 +4,12 @@ import KanbanBoard from '@/components/candidates/KanbanBoard'
 
 function isPipelineEntry(app: any): boolean {
   const candidateSource = (app.candidate?.source || '').toLowerCase()
-  const appSource       = (app.source || '').toLowerCase()
-  const status          = app.status || ''
+  const status          = app.status  || ''
+  const notes           = app.notes   || ''
+  const appSource       = (app.source || '').toLowerCase()  // works if source column added later
 
-  // Always show if HR explicitly added from talent pool or apply link
+  // Always show if HR explicitly added this candidate (from talent pool or apply link)
+  if (notes === 'talent_pool_apply')                          return true
   if (appSource === 'talent_pool' || appSource === 'apply_link') return true
 
   // Portal-sourced candidates only appear once HR has moved them past 'applied'

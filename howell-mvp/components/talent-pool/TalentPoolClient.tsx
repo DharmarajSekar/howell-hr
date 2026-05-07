@@ -108,8 +108,10 @@ export default function TalentPoolClient() {
   const appMap = useMemo(() => {
     const m: Record<string, any[]> = {}
     applications.forEach((a: any) => {
-      if (!m[a.candidate_id]) m[a.candidate_id] = []
-      m[a.candidate_id].push(a)
+      const cid = a.candidate_id || a.candidate?.id
+      if (!cid) return
+      if (!m[cid]) m[cid] = []
+      m[cid].push(a)
     })
     return m
   }, [applications])
@@ -720,12 +722,10 @@ export default function TalentPoolClient() {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
-                              job_id:         applyJobId,
-                              candidate_id:   selected.id,
-                              candidate_name: selected.full_name,
-                              job_title:      chosenJob?.title || '',
-                              status:         'applied',
-                              source:         'talent_pool',
+                              job_id:       applyJobId,
+                              candidate_id: selected.id,
+                              status:       'applied',
+                              notes:        'talent_pool_apply',
                             }),
                           })
                           if (!res.ok) {
