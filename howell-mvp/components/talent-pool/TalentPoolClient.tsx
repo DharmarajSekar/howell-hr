@@ -59,6 +59,13 @@ export default function TalentPoolClient() {
   const [showSimilar,   setShowSimilar]   = useState(false)
   const [similarTarget, setSimilarTarget] = useState<any>(null)
 
+  // Apply to Job
+  const [showApply,    setShowApply]    = useState(false)
+  const [applyJobId,   setApplyJobId]   = useState('')
+  const [applying,     setApplying]     = useState(false)
+  const [applySuccess, setApplySuccess] = useState(false)
+  const [applyError,   setApplyError]   = useState('')
+
   // Referral modal
   const [showReferral,   setShowReferral]   = useState(false)
   const [referralForm,   setReferralForm]   = useState({
@@ -490,12 +497,27 @@ export default function TalentPoolClient() {
                     </div>
                   )}
 
-                  {/* Similar Candidates CTA */}
-                  <button
-                    onClick={() => { setSimilarTarget(selected); setShowSimilar(true) }}
-                    className="w-full flex items-center justify-center gap-2 border border-gray-200 text-gray-600 hover:bg-gray-50 py-2.5 rounded-xl text-sm font-medium transition">
-                    <Copy size={14}/> Find Similar Candidates
-                  </button>
+                  {/* Action buttons */}
+                  <div className="flex gap-2">
+                    {/* Apply to Job */}
+                    <button
+                      onClick={() => {
+                        setApplyJobId('')
+                        setApplySuccess(false)
+                        setApplyError('')
+                        setShowApply(true)
+                      }}
+                      className="flex-1 flex items-center justify-center gap-2 bg-red-700 hover:bg-red-800 text-white py-2.5 rounded-xl text-sm font-medium transition">
+                      <UserPlus size={14}/> Apply to Job
+                    </button>
+
+                    {/* Find Similar */}
+                    <button
+                      onClick={() => { setSimilarTarget(selected); setShowSimilar(true) }}
+                      className="flex-1 flex items-center justify-center gap-2 border border-gray-200 text-gray-600 hover:bg-gray-50 py-2.5 rounded-xl text-sm font-medium transition">
+                      <Copy size={14}/> Find Similar
+                    </button>
+                  </div>
                 </div>
               </div>
             ) : (
@@ -556,6 +578,157 @@ export default function TalentPoolClient() {
             <div className="p-6 border-t border-gray-100">
               <button onClick={() => { setShowMatch(false); setMatchJob('') }}
                 className="w-full border border-gray-300 text-gray-700 py-2.5 rounded-lg text-sm font-medium hover:bg-gray-50 transition">Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Apply to Job Modal ──────────────────────────────── */}
+      {showApply && selected && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+
+            {/* Header */}
+            <div className="p-6 border-b border-gray-100 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-gray-900">Apply to Job</h2>
+                <p className="text-sm text-gray-500 mt-0.5">
+                  Add <strong>{selected.full_name}</strong> to a job pipeline
+                </p>
+              </div>
+              <button onClick={() => setShowApply(false)} className="text-gray-400 hover:text-gray-600 transition">
+                <X size={20}/>
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-6">
+              {applySuccess ? (
+                <div className="text-center py-6">
+                  <CheckCircle size={44} className="mx-auto text-green-500 mb-3"/>
+                  <h3 className="font-bold text-gray-900 mb-1">Application Created!</h3>
+                  <p className="text-sm text-gray-500">
+                    {selected.full_name} has been added to the pipeline for{' '}
+                    <strong>{jobs.find(j => j.id === applyJobId)?.title || 'the selected role'}</strong>.
+                  </p>
+                  <div className="flex gap-2 mt-5">
+                    <button
+                      onClick={() => { setShowApply(false); setApplySuccess(false) }}
+                      className="flex-1 border border-gray-300 text-gray-700 py-2.5 rounded-lg text-sm font-medium hover:bg-gray-50 transition">
+                      Done
+                    </button>
+                    <button
+                      onClick={() => { setApplySuccess(false); setApplyJobId('') }}
+                      className="flex-1 bg-red-700 hover:bg-red-800 text-white py-2.5 rounded-lg text-sm font-medium transition">
+                      Apply to Another Job
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {/* Candidate summary */}
+                  <div className="flex items-center gap-3 bg-gray-50 rounded-xl p-3">
+                    <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center text-red-700 font-bold text-sm flex-shrink-0">
+                      {selected.full_name?.charAt(0)}
+                    </div>
+                    <div>
+                      <div className="font-semibold text-sm text-gray-900">{selected.full_name}</div>
+                      <div className="text-xs text-gray-500">{selected.current_title} · {selected.experience_years}y exp · {selected.location}</div>
+                    </div>
+                  </div>
+
+                  {/* Job selector */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Select Job Posting *</label>
+                    {jobs.filter(j => j.status === 'active').length === 0 ? (
+                      <p className="text-sm text-gray-400 bg-gray-50 rounded-lg p-3">No active job postings found.</p>
+                    ) : (
+                      <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                        {jobs
+                          .filter(j => j.status === 'active')
+                          .map(j => {
+                            const alreadyApplied = (appMap[selected.id] || []).some((a: any) => a.job_id === j.id)
+                            return (
+                              <label
+                                key={j.id}
+                                className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition
+                                  ${applyJobId === j.id ? 'border-red-500 bg-red-50' : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'}
+                                  ${alreadyApplied ? 'opacity-50 cursor-not-allowed' : ''}
+                                `}
+                              >
+                                <input
+                                  type="radio"
+                                  name="applyJob"
+                                  value={j.id}
+                                  disabled={alreadyApplied}
+                                  checked={applyJobId === j.id}
+                                  onChange={() => !alreadyApplied && setApplyJobId(j.id)}
+                                  className="mt-0.5 accent-red-700"
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <div className="font-medium text-sm text-gray-900">{j.title}</div>
+                                  <div className="text-xs text-gray-500">{j.department} · {j.location}</div>
+                                  {alreadyApplied && (
+                                    <span className="text-xs text-amber-600 font-medium">Already applied</span>
+                                  )}
+                                </div>
+                                <div className="text-xs text-gray-400 flex-shrink-0">
+                                  {j.openings - (j.positions_filled || 0)} open
+                                </div>
+                              </label>
+                            )
+                          })}
+                      </div>
+                    )}
+                  </div>
+
+                  {applyError && (
+                    <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{applyError}</p>
+                  )}
+
+                  {/* Actions */}
+                  <div className="flex gap-3 pt-1">
+                    <button
+                      onClick={() => setShowApply(false)}
+                      className="flex-1 border border-gray-300 text-gray-700 py-2.5 rounded-lg text-sm font-medium hover:bg-gray-50 transition">
+                      Cancel
+                    </button>
+                    <button
+                      disabled={!applyJobId || applying}
+                      onClick={async () => {
+                        if (!applyJobId) return
+                        setApplying(true)
+                        setApplyError('')
+                        try {
+                          const res = await fetch('/api/applications', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              job_id:        applyJobId,
+                              candidate_id:  selected.id,
+                              candidate_name: selected.full_name,
+                              status:        'applied',
+                              source:        'talent_pool',
+                            }),
+                          })
+                          if (!res.ok) throw new Error('Failed to create application')
+                          setApplySuccess(true)
+                          // Refresh applications so "Already applied" updates
+                          const appsRes = await fetch('/api/applications', { cache: 'no-store' })
+                          const appsData = await appsRes.json()
+                          if (Array.isArray(appsData)) setApplications(appsData)
+                        } catch (err: any) {
+                          setApplyError(err.message || 'Something went wrong. Please try again.')
+                        } finally {
+                          setApplying(false)
+                        }
+                      }}
+                      className="flex-1 bg-red-700 hover:bg-red-800 disabled:opacity-50 text-white py-2.5 rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2">
+                      {applying ? <><Loader2 size={14} className="animate-spin"/> Adding…</> : <><UserPlus size={14}/> Add to Pipeline</>}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
