@@ -136,6 +136,38 @@ export default function EditJobPage() {
     }
   }
 
+  /** Reopen closed job → creates a BRAND NEW job (old closed record is preserved) */
+  async function reopenAsNew() {
+    setSaving(true)
+    try {
+      const payload = {
+        ...form,
+        skills,
+        experience_min:   Number(form.experience_min),
+        experience_max:   Number(form.experience_max),
+        salary_min:       form.salary_min !== '' ? Number(form.salary_min) : null,
+        salary_max:       form.salary_max !== '' ? Number(form.salary_max) : null,
+        openings:         Number(form.openings) || 1,
+        positions_filled: 0,          // fresh start
+        status:           'active',
+      }
+
+      const res = await fetch('/api/jobs', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(payload),
+      })
+
+      if (!res.ok) throw new Error('Failed to create new posting')
+
+      router.push('/jobs')
+    } catch (err: any) {
+      alert(`Error reopening: ${err.message}`)
+    } finally {
+      setSaving(false)
+    }
+  }
+
   if (loading) return (
     <div className="p-8 max-w-3xl mx-auto space-y-4 animate-pulse">
       <div className="h-8 bg-gray-100 rounded w-1/3" />
@@ -175,8 +207,9 @@ export default function EditJobPage() {
       </div>
 
       {isClosed && (
-        <div className="mb-5 flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
-          <span>⚠ This job is currently closed. Update details and click <strong>Reactivate</strong> to reopen it.</span>
+        <div className="mb-5 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800 space-y-1">
+          <p className="font-semibold">⚠ This job is currently closed</p>
+          <p>Edit the details below, then click <strong>"Reopen as New Post"</strong> — a fresh active posting will be created and the old closed record will be kept for history. Or use <strong>"Save Changes"</strong> to update only the closed record without reopening.</p>
         </div>
       )}
 
@@ -326,9 +359,9 @@ export default function EditJobPage() {
             </button>
           )}
           {isClosed && (
-            <button onClick={() => save('active')} disabled={saving}
+            <button onClick={reopenAsNew} disabled={saving}
               className="flex-1 bg-green-700 hover:bg-green-800 text-white py-3 rounded-lg text-sm font-semibold transition disabled:opacity-60">
-              {saving ? 'Reopening…' : 'Reactivate Role'}
+              {saving ? 'Creating New Post…' : '✦ Reopen as New Post'}
             </button>
           )}
           {origStatus === 'active' && (

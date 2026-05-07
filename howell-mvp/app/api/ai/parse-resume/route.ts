@@ -1,30 +1,81 @@
 /**
  * POST /api/ai/parse-resume
  *
- * Accepts resume text (pasted or extracted from file client-side).
+ * Accepts either:
+ *   - JSON body: { resumeText: string }
+ *   - FormData:  resume = File (pdf / txt / docx)
+ *
  * Calls Claude API to extract structured candidate data.
  * Falls back to mock if no ANTHROPIC_API_KEY is set.
- *
- * Body: { resumeText: string }
- * Returns: { full_name, email, phone, current_title, current_company,
- *             experience_years, skills, location, salary_expectation, summary }
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { mockParseResume } from '@/lib/ai-mock'
 
 export const dynamic = 'force-dynamic'
 
+/** Best-effort text extraction from a file buffer */
+async function extractText(file: File): Promise<string> {
+  const buffer = Buffer.from(await file.arrayBuffer())
+  const ext    = file.name.split('.').pop()?.toLowerCase() ?? ''
+
+  if (ext === 'txt') {
+    // Plain text — direct decode
+    return buffer.toString('utf-8')
+  }
+
+  if (ext === 'pdf') {
+    // PDFs embed readable text — extract printable ASCII / UTF-8 runs
+    const raw = buffer.toString('latin1')
+    // Pull strings from inside PDF text objects (BT ... ET blocks)
+    const blocks: string[] = []
+    const btEt = /BT([\s\S]*?)ET/g
+    let m: RegExpExecArray | null
+    while ((m = btEt.exec(raw)) !== null) {
+      // Extract content inside parentheses (PDF string literals)
+      const inner = m[1]
+      const strRe = /\(([^)]{1,300})\)/g
+      let sm: RegExpExecArray | null
+      while ((sm = strRe.exec(inner)) !== null) {
+        const chunk = sm[1].replace(/\\[nrt\\()]/g, ' ').trim()
+        if (chunk.length > 2) blocks.push(chunk)
+      }
+    }
+    if (blocks.length > 0) return blocks.join(' ')
+
+    // Fallback: extract any long runs of printable ASCII
+    const printable = raw.match(/[ -~\t\n\r]{6,}/g) ?? []
+    return printable.filter(s => s.trim().length > 5).join(' ').slice(0, 6000)
+  }
+
+  // For docx and other formats, try UTF-8 decode and grab readable runs
+  const raw = buffer.toString('utf-8', 0, buffer.length)
+  const printable = raw.match(/[\w\s@.,\-:;()+]{8,}/g) ?? []
+  return printable.join(' ').slice(0, 6000)
+}
+
 export async function POST(req: NextRequest) {
   try {
-    const { resumeText } = await req.json()
+    let resumeText = ''
+    const contentType = req.headers.get('content-type') ?? ''
 
-    if (!resumeText || resumeText.trim().length < 30) {
-      return NextResponse.json({ error: 'Resume text is too short or empty' }, { status: 400 })
+    if (contentType.includes('multipart/form-data')) {
+      // File upload path
+      const form = await req.formData()
+      const file = form.get('resume') as File | null
+      if (!file) return NextResponse.json({ error: 'No file provided' }, { status: 400 })
+      resumeText = await extractText(file)
+    } else {
+      // JSON path (backward-compatible)
+      const body = await req.json()
+      resumeText = body.resumeText ?? ''
+    }
+
+    if (!resumeText || resumeText.trim().length < 20) {
+      return NextResponse.json({ error: 'Could not extract enough text from the file. Try a text-based PDF or a .txt file.' }, { status: 400 })
     }
 
     const apiKey = process.env.ANTHROPIC_API_KEY
     if (!apiKey) {
-      // Fall back to intelligent mock
       const mock = await mockParseResume()
       return NextResponse.json({ ...mock, source: 'mock' })
     }
@@ -72,7 +123,6 @@ ${resumeText.slice(0, 4000)}
     const aiData = await response.json()
     const text   = aiData.content?.[0]?.text || ''
 
-    // Extract JSON from response
     const jsonMatch = text.match(/\{[\s\S]*\}/)
     if (!jsonMatch) {
       const mock = await mockParseResume()
@@ -81,7 +131,6 @@ ${resumeText.slice(0, 4000)}
 
     const parsed = JSON.parse(jsonMatch[0])
 
-    // Sanitise fields
     return NextResponse.json({
       full_name:          parsed.full_name          || 'Unknown',
       email:              parsed.email               || '',

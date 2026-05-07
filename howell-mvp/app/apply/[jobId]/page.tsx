@@ -1,7 +1,7 @@
 'use client'
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams } from 'next/navigation'
-import { Loader2, Sparkles, CheckCircle, Upload, Bot, Send, X, MessageCircle } from 'lucide-react'
+import { Loader2, Sparkles, CheckCircle, Upload, Bot, Send, X, MessageCircle, FileText, AlertCircle } from 'lucide-react'
 import type { Job } from '@/types'
 
 /* ── Candidate Chatbot Widget ──────────────────────────────────────────────── */
@@ -46,13 +46,11 @@ function CandidateChatbot({ jobTitle, candidateName }: { jobTitle: string; candi
 
   return (
     <>
-      {/* Floating button */}
       <button onClick={() => setOpen(o => !o)}
         className="fixed bottom-6 right-6 z-40 w-14 h-14 bg-red-700 hover:bg-red-800 text-white rounded-full shadow-lg flex items-center justify-center transition">
         {open ? <X size={20}/> : <MessageCircle size={22}/>}
       </button>
 
-      {/* Chat window */}
       {open && (
         <div className="fixed bottom-24 right-6 z-40 w-80 bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col" style={{ height: '420px' }}>
           <div className="flex items-center gap-2 px-4 py-3 bg-red-700 rounded-t-2xl">
@@ -102,11 +100,157 @@ function CandidateChatbot({ jobTitle, candidateName }: { jobTitle: string; candi
   )
 }
 
+/* ── Resume Upload / Drop Zone ─────────────────────────────────────────────── */
+function ResumeDropZone({ onParsed, parsing, setParsing }: {
+  onParsed: (data: any) => void
+  parsing:  boolean
+  setParsing: (v: boolean) => void
+}) {
+  const inputRef            = useRef<HTMLInputElement>(null)
+  const [dragging, setDragging] = useState(false)
+  const [fileName, setFileName] = useState<string | null>(null)
+  const [error,    setError]    = useState<string | null>(null)
+  const [success,  setSuccess]  = useState(false)
+
+  const ACCEPTED = ['application/pdf', 'text/plain', 'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document']
+
+  async function processFile(file: File) {
+    setError(null)
+    setSuccess(false)
+    if (!ACCEPTED.includes(file.type) && !file.name.match(/\.(pdf|txt|doc|docx)$/i)) {
+      setError('Please upload a PDF, Word (.doc/.docx), or text file.')
+      return
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setError('File is too large (max 10 MB).')
+      return
+    }
+
+    setFileName(file.name)
+    setParsing(true)
+
+    try {
+      const formData = new FormData()
+      formData.append('resume', file)
+
+      const res  = await fetch('/api/ai/parse-resume', { method: 'POST', body: formData })
+      const data = await res.json()
+
+      if (data.error) throw new Error(data.error)
+
+      onParsed(data)
+      setSuccess(true)
+    } catch (err: any) {
+      setError(err.message || 'Could not parse the resume. Please fill in your details manually.')
+    } finally {
+      setParsing(false)
+    }
+  }
+
+  const onDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    setDragging(false)
+    const file = e.dataTransfer.files?.[0]
+    if (file) processFile(file)
+  }, [])
+
+  const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) processFile(file)
+  }
+
+  return (
+    <div className="mb-6">
+      {/* Drop zone */}
+      <div
+        onDragOver={e => { e.preventDefault(); setDragging(true) }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={onDrop}
+        onClick={() => !parsing && inputRef.current?.click()}
+        className={`relative border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all
+          ${dragging           ? 'border-red-500 bg-red-50'    : ''}
+          ${success            ? 'border-green-400 bg-green-50' : ''}
+          ${!dragging && !success ? 'border-gray-300 hover:border-red-400 hover:bg-red-50/30 bg-gray-50' : ''}
+          ${parsing ? 'cursor-not-allowed opacity-70' : ''}
+        `}
+      >
+        <input
+          ref={inputRef}
+          type="file"
+          accept=".pdf,.doc,.docx,.txt"
+          className="hidden"
+          onChange={onFileChange}
+          disabled={parsing}
+        />
+
+        {parsing ? (
+          <div className="flex flex-col items-center gap-2">
+            <Loader2 size={28} className="animate-spin text-red-600"/>
+            <p className="text-sm font-medium text-gray-700">Parsing your resume with AI…</p>
+            <p className="text-xs text-gray-400">Extracting your details automatically</p>
+          </div>
+        ) : success ? (
+          <div className="flex flex-col items-center gap-2">
+            <CheckCircle size={28} className="text-green-600"/>
+            <p className="text-sm font-medium text-green-700">Resume parsed successfully!</p>
+            <p className="text-xs text-gray-500 truncate max-w-xs">{fileName}</p>
+            <button
+              type="button"
+              onClick={e => { e.stopPropagation(); setSuccess(false); setFileName(null); inputRef.current?.click() }}
+              className="text-xs text-red-600 hover:underline mt-1"
+            >
+              Upload a different file
+            </button>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center gap-2">
+            {fileName ? (
+              <>
+                <FileText size={28} className="text-gray-500"/>
+                <p className="text-sm font-medium text-gray-700">{fileName}</p>
+              </>
+            ) : (
+              <>
+                <Upload size={28} className={dragging ? 'text-red-600' : 'text-gray-400'}/>
+                <p className="text-sm font-semibold text-gray-700">
+                  {dragging ? 'Drop your resume here' : 'Upload Resume'}
+                </p>
+                <p className="text-xs text-gray-400">
+                  Drag &amp; drop or <span className="text-red-600 font-medium">click to browse</span>
+                </p>
+                <p className="text-xs text-gray-400">PDF, Word (.doc/.docx), or .txt · Max 10 MB</p>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Error message */}
+      {error && (
+        <div className="mt-2 flex items-start gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+          <AlertCircle size={13} className="mt-0.5 flex-shrink-0"/>
+          {error}
+        </div>
+      )}
+
+      {/* AI autofill hint */}
+      {!success && !parsing && (
+        <p className="mt-2 text-xs text-gray-400 text-center">
+          <Sparkles size={11} className="inline mr-1 text-red-500"/>
+          AI will auto-fill your details from the resume
+        </p>
+      )}
+    </div>
+  )
+}
+
+/* ── Main Apply Page ───────────────────────────────────────────────────────── */
 export default function ApplyPage() {
   const { jobId } = useParams()
   const [job, setJob]         = useState<Job | null>(null)
   const [loading, setLoading] = useState(true)
-  const [parsing, setParsing] = useState(false)
+  const [parsing,  setParsing]  = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [submitted, setSubmitted]   = useState(false)
   const [form, setForm] = useState({
@@ -121,36 +265,32 @@ export default function ApplyPage() {
 
   function set(key: string, val: string) { setForm(f => ({ ...f, [key]: val })) }
 
-  async function parseResume() {
-    setParsing(true)
-    const res = await fetch('/api/ai/parse-resume', { method: 'POST' })
-    const data = await res.json()
+  /** Called when resume is successfully parsed */
+  function handleParsed(data: any) {
     setForm({
-      full_name: data.full_name || '',
-      email: data.email || '',
-      phone: data.phone || '',
-      current_title: data.current_title || '',
-      current_company: data.current_company || '',
-      experience_years: String(data.experience_years || ''),
-      location: data.location || '',
+      full_name:          data.full_name          || '',
+      email:              data.email              || '',
+      phone:              data.phone              || '',
+      current_title:      data.current_title      || '',
+      current_company:    data.current_company    || '',
+      experience_years:   String(data.experience_years || ''),
+      location:           data.location           || '',
       salary_expectation: String(data.salary_expectation || ''),
-      summary: data.summary || '',
-      skills: (data.skills || []).join(', '),
+      summary:            data.summary            || '',
+      skills:             Array.isArray(data.skills) ? data.skills.join(', ') : (data.skills || ''),
     })
-    setParsing(false)
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setSubmitting(true)
 
-    // Upsert candidate
     const candRes = await fetch('/api/candidates', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ...form,
-        experience_years: Number(form.experience_years),
+        experience_years:   Number(form.experience_years),
         salary_expectation: Number(form.salary_expectation),
         skills: form.skills.split(',').map(s => s.trim()).filter(Boolean),
         source: 'apply_link',
@@ -158,7 +298,6 @@ export default function ApplyPage() {
     })
     const candidate = await candRes.json()
 
-    // Score vs job
     const scoreRes = await fetch('/api/ai/score-resume', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -166,18 +305,17 @@ export default function ApplyPage() {
     })
     const score = await scoreRes.json()
 
-    // Create application
     await fetch('/api/applications', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        job_id: jobId,
-        candidate_id: candidate.id,
-        status: 'applied',
-        ai_match_score: score.score,
+        job_id:           jobId,
+        candidate_id:     candidate.id,
+        status:           'applied',
+        ai_match_score:   score.score,
         ai_match_summary: score.summary,
-        ai_strengths: score.strengths,
-        ai_gaps: score.gaps,
+        ai_strengths:     score.strengths,
+        ai_gaps:          score.gaps,
       }),
     })
 
@@ -212,7 +350,8 @@ export default function ApplyPage() {
   return (
     <div className="min-h-screen bg-gray-50 py-10">
       <div className="max-w-2xl mx-auto px-4">
-        {/* Header */}
+
+        {/* Header card */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-6">
           <div className="flex items-center gap-3 mb-4">
             <div className="w-10 h-10 bg-red-700 rounded-xl flex items-center justify-center">
@@ -233,19 +372,18 @@ export default function ApplyPage() {
           </div>
         </div>
 
-        {/* Form */}
+        {/* Form card */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-          <div className="flex items-center justify-between mb-5">
-            <h2 className="font-semibold text-gray-900">Your Details</h2>
-            <button
-              type="button"
-              onClick={parseResume}
-              disabled={parsing}
-              className="flex items-center gap-2 text-sm font-medium text-red-700 border border-red-200 hover:border-red-400 px-3 py-1.5 rounded-lg transition disabled:opacity-60"
-            >
-              {parsing ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-              {parsing ? 'Parsing Resume…' : 'Auto-fill from Resume (AI)'}
-            </button>
+          <h2 className="font-semibold text-gray-900 mb-5">Your Application</h2>
+
+          {/* ── Resume upload zone ── */}
+          <ResumeDropZone onParsed={handleParsed} parsing={parsing} setParsing={setParsing}/>
+
+          <div className="relative mb-5">
+            <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-100"/></div>
+            <div className="relative flex justify-center">
+              <span className="bg-white px-3 text-xs text-gray-400">or fill in manually</span>
+            </div>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -310,7 +448,7 @@ export default function ApplyPage() {
 
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || parsing}
               className="w-full bg-red-700 hover:bg-red-800 text-white py-3 rounded-xl font-semibold text-sm transition disabled:opacity-60 flex items-center justify-center gap-2"
             >
               {submitting ? <><Loader2 size={16} className="animate-spin" /> Submitting & Scoring…</> : 'Submit Application'}
@@ -319,7 +457,6 @@ export default function ApplyPage() {
         </div>
       </div>
 
-      {/* Floating chatbot */}
       <CandidateChatbot jobTitle={job.title} candidateName={form.full_name}/>
     </div>
   )
