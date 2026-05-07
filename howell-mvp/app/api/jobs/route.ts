@@ -25,15 +25,18 @@ export async function POST(req: Request) {
       title, department, location, employment_type,
       experience_min, experience_max, salary_min, salary_max,
       status, description, requirements, nice_to_have, skills,
+      openings, positions_filled,
     } = body
 
     const insertPayload: Record<string, any> = {
       title, department, location, employment_type,
       experience_min, experience_max,
-      salary_min: salary_min ?? null,
-      salary_max: salary_max ?? null,
-      status: status || 'active',
-      description, requirements, nice_to_have,
+      salary_min:        salary_min        ?? null,
+      salary_max:        salary_max        ?? null,
+      status:            status            || 'active',
+      description,       requirements,     nice_to_have,
+      openings:          openings          ?? 1,
+      positions_filled:  positions_filled  ?? 0,
     }
 
     // Try inserting with skills first; if the column doesn't exist yet, retry without it

@@ -2,7 +2,8 @@
 export const dynamic = 'force-dynamic'
 import { useEffect, useState, useRef } from 'react'
 import Link from 'next/link'
-import { Plus, MapPin, Clock, Users, MoreVertical, CheckCircle, FileEdit, XCircle, PauseCircle, Trash2, RefreshCw } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { Plus, MapPin, Clock, Users, MoreVertical, CheckCircle, FileEdit, XCircle, PauseCircle, Trash2, RefreshCw, Pencil, RotateCcw } from 'lucide-react'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 interface Job {
@@ -54,6 +55,7 @@ function JobMenu({ job, onStatusChange, onDelete }: {
 }) {
   const [open, setOpen]  = useState(false)
   const ref              = useRef<HTMLDivElement>(null)
+  const router           = useRouter()
 
   // Close on outside click
   useEffect(() => {
@@ -75,7 +77,36 @@ function JobMenu({ job, onStatusChange, onDelete }: {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-8 z-50 bg-white border border-gray-100 rounded-xl shadow-lg py-1 w-44">
+        <div className="absolute right-0 top-8 z-50 bg-white border border-gray-100 rounded-xl shadow-lg py-1 w-48">
+
+          {/* Edit — shown for draft and active jobs */}
+          {(job.status === 'draft' || job.status === 'active' || job.status === 'paused') && (
+            <button
+              onClick={() => { router.push(`/jobs/${job.id}/edit`); setOpen(false) }}
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 transition"
+            >
+              <Pencil size={14} />
+              Edit
+            </button>
+          )}
+
+          {/* Reopen & Edit — shown only for closed jobs */}
+          {job.status === 'closed' && (
+            <button
+              onClick={() => { router.push(`/jobs/${job.id}/edit`); setOpen(false) }}
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-green-600 hover:bg-green-50 transition"
+            >
+              <RotateCcw size={14} />
+              Reopen &amp; Edit
+            </button>
+          )}
+
+          {/* Divider before status actions */}
+          {(job.status === 'draft' || job.status === 'active' || job.status === 'paused' || job.status === 'closed') && (
+            <div className="border-t border-gray-100 my-1" />
+          )}
+
+          {/* Status transitions */}
           {STATUS_ACTIONS.filter(a => a.status !== job.status).map(action => (
             <button
               key={action.status}
@@ -86,6 +117,7 @@ function JobMenu({ job, onStatusChange, onDelete }: {
               {action.label}
             </button>
           ))}
+
           <div className="border-t border-gray-100 mt-1 pt-1">
             <button
               onClick={() => { onDelete(job.id); setOpen(false) }}
