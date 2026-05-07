@@ -100,26 +100,78 @@ function CandidateChatbot({ jobTitle, candidateName }: { jobTitle: string; candi
   )
 }
 
+/* ── PDF.js text extraction (client-side, no server needed) ─────────────────── */
+const PDFJS_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js'
+const PDFJS_WORKER = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
+
+async function extractPdfText(file: File): Promise<string> {
+  // Dynamically load PDF.js from CDN if not already loaded
+  if (!(window as any).pdfjsLib) {
+    await new Promise<void>((resolve, reject) => {
+      const script = document.createElement('script')
+      script.src = PDFJS_CDN
+      script.onload = () => resolve()
+      script.onerror = () => reject(new Error('Failed to load PDF.js'))
+      document.head.appendChild(script)
+    })
+  }
+
+  const pdfjsLib = (window as any).pdfjsLib
+  pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER
+
+  const arrayBuffer = await file.arrayBuffer()
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
+
+  const pageTexts: string[] = []
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page    = await pdf.getPage(i)
+    const content = await page.getTextContent()
+    // Join text items with spaces, preserve line breaks between blocks
+    const pageText = content.items
+      .map((item: any) => item.str)
+      .join(' ')
+    pageTexts.push(pageText)
+  }
+
+  return pageTexts.join('\n')
+}
+
+async function extractFileText(file: File): Promise<string> {
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
+
+  if (ext === 'pdf' || file.type === 'application/pdf') {
+    return extractPdfText(file)
+  }
+
+  // Plain text / fallback: read as UTF-8 text
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload  = e => resolve((e.target?.result as string) ?? '')
+    reader.onerror = () => reject(new Error('Could not read file'))
+    reader.readAsText(file, 'utf-8')
+  })
+}
+
 /* ── Resume Upload / Drop Zone ─────────────────────────────────────────────── */
 function ResumeDropZone({ onParsed, parsing, setParsing }: {
   onParsed: (data: any) => void
   parsing:  boolean
   setParsing: (v: boolean) => void
 }) {
-  const inputRef            = useRef<HTMLInputElement>(null)
+  const inputRef                = useRef<HTMLInputElement>(null)
   const [dragging, setDragging] = useState(false)
   const [fileName, setFileName] = useState<string | null>(null)
   const [error,    setError]    = useState<string | null>(null)
   const [success,  setSuccess]  = useState(false)
-
-  const ACCEPTED = ['application/pdf', 'text/plain', 'application/msword',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document']
+  const [status,   setStatus]   = useState('')   // progress label
 
   async function processFile(file: File) {
     setError(null)
     setSuccess(false)
-    if (!ACCEPTED.includes(file.type) && !file.name.match(/\.(pdf|txt|doc|docx)$/i)) {
-      setError('Please upload a PDF, Word (.doc/.docx), or text file.')
+    setStatus('')
+
+    if (!file.name.match(/\.(pdf|txt|doc|docx)$/i)) {
+      setError('Please upload a PDF, Word (.doc/.docx), or .txt file.')
       return
     }
     if (file.size > 10 * 1024 * 1024) {
@@ -131,18 +183,31 @@ function ResumeDropZone({ onParsed, parsing, setParsing }: {
     setParsing(true)
 
     try {
-      const formData = new FormData()
-      formData.append('resume', file)
+      // Step 1: extract text client-side (PDF.js for PDFs → clean text always)
+      setStatus('Reading resume…')
+      const resumeText = await extractFileText(file)
 
-      const res  = await fetch('/api/ai/parse-resume', { method: 'POST', body: formData })
+      if (!resumeText || resumeText.trim().length < 20) {
+        throw new Error('Could not extract text from this file. Try a text-based PDF or a .txt file.')
+      }
+
+      // Step 2: send clean text to API for structured parsing
+      setStatus('Parsing with AI…')
+      const res  = await fetch('/api/ai/parse-resume', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ resumeText }),
+      })
       const data = await res.json()
 
       if (data.error) throw new Error(data.error)
 
       onParsed(data)
       setSuccess(true)
+      setStatus('')
     } catch (err: any) {
       setError(err.message || 'Could not parse the resume. Please fill in your details manually.')
+      setStatus('')
     } finally {
       setParsing(false)
     }
@@ -187,7 +252,7 @@ function ResumeDropZone({ onParsed, parsing, setParsing }: {
         {parsing ? (
           <div className="flex flex-col items-center gap-2">
             <Loader2 size={28} className="animate-spin text-red-600"/>
-            <p className="text-sm font-medium text-gray-700">Parsing your resume with AI…</p>
+            <p className="text-sm font-medium text-gray-700">{status || 'Processing…'}</p>
             <p className="text-xs text-gray-400">Extracting your details automatically</p>
           </div>
         ) : success ? (
