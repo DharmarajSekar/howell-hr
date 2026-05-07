@@ -65,6 +65,8 @@ export default function TalentPoolClient() {
   const [applying,     setApplying]     = useState(false)
   const [applySuccess, setApplySuccess] = useState(false)
   const [applyError,   setApplyError]   = useState('')
+  // Track recent successful applies: candidateId → job title
+  const [recentApply,  setRecentApply]  = useState<Record<string, string>>({})
 
   // Referral modal
   const [showReferral,   setShowReferral]   = useState(false)
@@ -497,6 +499,14 @@ export default function TalentPoolClient() {
                     </div>
                   )}
 
+                  {/* Applied success badge — shown after applying */}
+                  {recentApply[selected.id] && (
+                    <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-xl px-4 py-2.5 text-sm text-green-700">
+                      <CheckCircle size={15} className="text-green-600 flex-shrink-0"/>
+                      <span>Added to pipeline for <strong>{recentApply[selected.id]}</strong></span>
+                    </div>
+                  )}
+
                   {/* Action buttons */}
                   <div className="flex gap-2">
                     {/* Apply to Job */}
@@ -507,8 +517,13 @@ export default function TalentPoolClient() {
                         setApplyError('')
                         setShowApply(true)
                       }}
-                      className="flex-1 flex items-center justify-center gap-2 bg-red-700 hover:bg-red-800 text-white py-2.5 rounded-xl text-sm font-medium transition">
-                      <UserPlus size={14}/> Apply to Job
+                      className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium transition
+                        ${(appMap[selected.id] || []).length > 0
+                          ? 'bg-gray-100 hover:bg-red-700 hover:text-white text-gray-700 border border-gray-200'
+                          : 'bg-red-700 hover:bg-red-800 text-white'
+                        }`}>
+                      <UserPlus size={14}/>
+                      {(appMap[selected.id] || []).length > 0 ? 'Apply to Another Job' : 'Apply to Job'}
                     </button>
 
                     {/* Find Similar */}
@@ -699,20 +714,24 @@ export default function TalentPoolClient() {
                         if (!applyJobId) return
                         setApplying(true)
                         setApplyError('')
+                        const chosenJob = jobs.find(j => j.id === applyJobId)
                         try {
                           const res = await fetch('/api/applications', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
-                              job_id:        applyJobId,
-                              candidate_id:  selected.id,
+                              job_id:         applyJobId,
+                              candidate_id:   selected.id,
                               candidate_name: selected.full_name,
-                              status:        'applied',
-                              source:        'talent_pool',
+                              job_title:      chosenJob?.title || '',
+                              status:         'applied',
+                              source:         'talent_pool',
                             }),
                           })
                           if (!res.ok) throw new Error('Failed to create application')
                           setApplySuccess(true)
+                          // Show badge in profile panel
+                          setRecentApply(prev => ({ ...prev, [selected.id]: chosenJob?.title || 'the role' }))
                           // Refresh applications so "Already applied" updates
                           const appsRes = await fetch('/api/applications', { cache: 'no-store' })
                           const appsData = await appsRes.json()

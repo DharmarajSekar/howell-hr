@@ -3,11 +3,17 @@ import { db } from '@/lib/db'
 import KanbanBoard from '@/components/candidates/KanbanBoard'
 
 function isPipelineEntry(app: any): boolean {
-  const source   = (app.candidate?.source || '').toLowerCase()
-  const status   = app.status || ''
-  const isPortal = source.includes('portal_sync') || source.includes('portal sync')
-  // Portal candidates only appear once HR has actively worked with them
+  const candidateSource = (app.candidate?.source || '').toLowerCase()
+  const appSource       = (app.source || '').toLowerCase()
+  const status          = app.status || ''
+
+  // Always show if HR explicitly added from talent pool or apply link
+  if (appSource === 'talent_pool' || appSource === 'apply_link') return true
+
+  // Portal-sourced candidates only appear once HR has moved them past 'applied'
+  const isPortal = candidateSource.includes('portal_sync') || candidateSource.includes('portal sync')
   if (isPortal && status === 'applied') return false
+
   return true
 }
 
