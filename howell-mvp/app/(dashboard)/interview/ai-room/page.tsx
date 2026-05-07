@@ -51,6 +51,7 @@ function AIRoomContent() {
   const [error, setError]       = useState<string | null>(null)
   const [showTranscript, setShowTranscript] = useState(false)
   const [launching, setLaunching] = useState(false)
+  const [retrying, setRetrying] = useState(false)   // must be here — before any early returns
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const pollRef   = useRef<NodeJS.Timeout>()
 
@@ -200,7 +201,6 @@ function AIRoomContent() {
   const isLive    = session.status === 'in_progress' || session.status === 'scheduled'
   const isDone    = session.status === 'completed'
   const isMock    = !session.tavus_conversation_url
-  const [retrying, setRetrying] = useState(false)
 
   async function retryWithTavus() {
     if (!session) return
