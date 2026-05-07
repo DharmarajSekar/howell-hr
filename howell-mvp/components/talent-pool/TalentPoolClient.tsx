@@ -728,14 +728,15 @@ export default function TalentPoolClient() {
                               source:         'talent_pool',
                             }),
                           })
-                          if (!res.ok) throw new Error('Failed to create application')
+                          if (!res.ok) {
+                            const errData = await res.json().catch(() => ({}))
+                            throw new Error(errData.error || 'Failed to create application')
+                          }
                           setApplySuccess(true)
                           // Show badge in profile panel
                           setRecentApply(prev => ({ ...prev, [selected.id]: chosenJob?.title || 'the role' }))
-                          // Refresh applications so "Already applied" updates
-                          const appsRes = await fetch('/api/applications', { cache: 'no-store' })
-                          const appsData = await appsRes.json()
-                          if (Array.isArray(appsData)) setApplications(appsData)
+                          // Full reload so appMap and candidate list both update
+                          await loadData()
                         } catch (err: any) {
                           setApplyError(err.message || 'Something went wrong. Please try again.')
                         } finally {

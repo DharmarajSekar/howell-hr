@@ -90,7 +90,8 @@ export const db = {
       return data
     },
     create: async (data: any) => {
-      const { data: app } = await svc().from('applications').insert(data).select().single()
+      const { data: app, error } = await svc().from('applications').insert(data).select().single()
+      if (error) throw new Error(error.message)
       return app
     },
     update: async (id: string, data: any) => {
