@@ -1,5 +1,5 @@
 /**
- * AI Interview conversation engine (Claude-powered)
+ * AI Interview conversation engine (Gemini-powered)
  *
  * GET  /api/interviews/ai-interview?applicationId=X&roundId=Y
  *      → Load candidate info + questions, create ai_session record
@@ -29,22 +29,23 @@ function db() {
 
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
 
-async function callClaude(prompt: string, maxTokens = 400) {
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type':      'application/json',
-      'x-api-key':         process.env.ANTHROPIC_API_KEY!,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model:      'claude-haiku-4-5-20251001',
-      max_tokens: maxTokens,
-      messages:   [{ role: 'user', content: prompt }],
-    }),
-  })
+async function callAI(prompt: string, maxTokens = 400) {
+  const apiKey = process.env.GEMINI_API_KEY
+  if (!apiKey) throw new Error('GEMINI_API_KEY is not configured')
+
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { maxOutputTokens: maxTokens, temperature: 0.7 },
+      }),
+    }
+  )
   const data = await res.json()
-  return data.content?.[0]?.text ?? ''
+  return data.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
 }
 
 function avg(arr: number[]) {
@@ -101,9 +102,9 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Fallback: generate 6 general questions with Claude if none found
+    // Fallback: generate 6 general questions with Gemini if none found
     if (!questions.length) {
-      const raw = await callClaude(
+      const raw = await callAI(
         `Generate 6 professional interview questions for a ${job?.title ?? 'the role'} position.
 Return ONLY a JSON array of strings: ["Q1?","Q2?","Q3?","Q4?","Q5?","Q6?"]`,
         300
@@ -178,7 +179,7 @@ export async function POST(req: NextRequest) {
 
     /* ── Opening greeting ─────────────────────────────────────────────── */
     if (isOpening) {
-      const speech = await callClaude(
+      const speech = await callAI(
         `You are Alex, a warm professional AI interviewer at HOWELL HR.
 Greet ${candidateName} briefly (2 sentences), explain this is an AI-assisted interview for the ${jobTitle} role,
 then immediately ask: "${currentQ}"
@@ -222,7 +223,7 @@ Return ONLY valid JSON (no extra text):
 signal must be one of: Strong | Good | Neutral | Weak | Poor
 speech must be natural spoken language, max 60 words.`
 
-    const raw   = await callClaude(prompt, 400)
+    const raw   = await callAI(prompt, 400)
     const match = raw.match(/\{[\s\S]*?\}/)
 
     let parsed: any = null
@@ -275,7 +276,7 @@ export async function PATCH(req: NextRequest) {
 
     let evaluation: any = {}
     try {
-      const raw = await callClaude(
+      const raw = await callAI(
         `Summarise this interview for the hiring team. Role: ${jobTitle}, Candidate: ${candidateName}.
 Average score: ${avgScore}/100.
 
