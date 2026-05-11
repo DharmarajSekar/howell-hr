@@ -29,6 +29,7 @@ interface AISession {
   id: string
   status: string
   tavus_conversation_url: string | null
+  recording_url: string | null
   ai_score: number | null
   recommendation: string | null
   scheduled_at: string | null
@@ -805,6 +806,8 @@ function QueueCard({ item, approving, onApprove, onReject }: {
 
 /* ── AI Session Card ──────────────────────────────────────────────────────── */
 function AISessionCard({ session: s }: { session: AISession }) {
+  const [showVideo, setShowVideo] = useState(false)
+
   const statusMap: Record<string, { label: string; cls: string }> = {
     scheduled:   { label: 'Scheduled',  cls: 'bg-amber-100 text-amber-700' },
     in_progress: { label: 'Live',       cls: 'bg-red-100 text-red-700' },
@@ -852,16 +855,43 @@ function AISessionCard({ session: s }: { session: AISession }) {
           </div>
           <div className="mt-3 flex items-center gap-2 flex-wrap">
             {s.status === 'completed' ? (
-              /* HR views results after candidate finishes */
-              <Link href={`/pre-screen/recordings`}
-                className="flex items-center gap-1.5 text-xs bg-violet-600 text-white px-3 py-1.5 rounded-lg hover:bg-violet-700 transition">
-                <Video size={12}/> View Results <ChevronRight size={11}/>
-              </Link>
+              <>
+                <Link href={`/pre-screen/recordings`}
+                  className="flex items-center gap-1.5 text-xs bg-violet-600 text-white px-3 py-1.5 rounded-lg hover:bg-violet-700 transition">
+                  <Video size={12}/> View Results <ChevronRight size={11}/>
+                </Link>
+                {s.recording_url && (
+                  <button
+                    onClick={() => setShowVideo(p => !p)}
+                    className="flex items-center gap-1.5 text-xs border border-violet-300 text-violet-700 bg-violet-50 hover:bg-violet-100 px-3 py-1.5 rounded-lg transition">
+                    <Video size={12}/> {showVideo ? 'Hide Recording' : 'Watch Recording'}
+                  </button>
+                )}
+              </>
             ) : (
               /* HR copies the candidate interview link to share */
               <CopyLinkButton sessionId={s.id}/>
             )}
           </div>
+          {/* Inline video player */}
+          {showVideo && s.recording_url && (
+            <div className="mt-4 rounded-xl overflow-hidden border border-gray-200 bg-gray-900">
+              <video
+                src={s.recording_url}
+                controls
+                className="w-full max-h-64 object-contain"
+              />
+              <div className="px-3 py-2 bg-gray-800 flex items-center justify-between">
+                <p className="text-xs text-gray-400">
+                  Interview Recording · {s.application?.candidate?.full_name}
+                </p>
+                <a href={s.recording_url} download target="_blank" rel="noreferrer"
+                  className="text-xs text-violet-400 hover:text-violet-300 transition">
+                  Download ↓
+                </a>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

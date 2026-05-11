@@ -186,6 +186,9 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
 
   const recognitionRef    = useRef<SpeechRecognition | null>(null)
   const webcamVideoRef    = useRef<HTMLVideoElement>(null)
+  const mediaRecorderRef  = useRef<MediaRecorder | null>(null)
+  const recordingChunks   = useRef<BlobPart[]>([])
+  const mediaStreamRef    = useRef<MediaStream | null>(null)
   const silenceTimerRef   = useRef<ReturnType<typeof setTimeout>>()
   const questionTimerRef  = useRef<ReturnType<typeof setInterval>>()
   const answerBufferRef   = useRef('')
@@ -232,11 +235,19 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
       questionsRef.current = qData.questions
       if (qData.sessionId) sessionDbIdRef.current = qData.sessionId
 
-      // Webcam
+      // Webcam + Microphone (audio needed for recording)
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
         if (webcamVideoRef.current) { webcamVideoRef.current.srcObject = stream; webcamVideoRef.current.muted = true }
-      } catch { /* camera optional */ }
+        mediaStreamRef.current = stream
+      } catch {
+        // Try video-only if mic permission denied
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+          if (webcamVideoRef.current) { webcamVideoRef.current.srcObject = stream; webcamVideoRef.current.muted = true }
+          mediaStreamRef.current = stream
+        } catch { /* camera optional */ }
+      }
 
       speechSynthesis.getVoices()
       speechSynthesis.onvoiceschanged = () => speechSynthesis.getVoices()
@@ -381,6 +392,9 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
     await avatarSpeak('That concludes your interview. Thank you for your time. Your responses have been recorded and our HR team will be in touch shortly. Best of luck!')
     setAvatarState('idle')
 
+    // Stop recording and upload (runs in parallel with DB save)
+    const uploadPromise = stopAndUploadRecording()
+
     // Save results
     if (sessionDbIdRef.current && scoresRef.current.length > 0) {
       const avg = Math.round(scoresRef.current.reduce((a, b) => a + b, 0) / scoresRef.current.length)
@@ -399,6 +413,9 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
         })
       } catch { /* log silently */ }
     }
+
+    // Wait for upload to finish before showing completion screen
+    await uploadPromise
     setPhaseSync('completed')
   }
 
@@ -406,8 +423,50 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
     setPhaseSync('opening')
     questionIndexRef.current = 0
     setQuestionIndex(0)
+    startRecording() // begin capturing video+audio
     await avatarSpeak(`Hello ${candidateName ? candidateName.split(' ')[0] : 'there'}! Welcome to your AI interview for the ${jobTitle} position. I'll be asking you ${questionsRef.current.length} questions. Please speak clearly and click "Done Answering" when you've finished each response. Let's begin. ${questionsRef.current[0]}`)
     startNewQuestion()
+  }
+
+  /* ── Video recording ── */
+  function startRecording() {
+    if (!mediaStreamRef.current) return
+    recordingChunks.current = []
+    const mimeTypes = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
+    let mr: MediaRecorder | null = null
+    for (const mt of mimeTypes) {
+      try {
+        if (MediaRecorder.isTypeSupported(mt)) {
+          mr = new MediaRecorder(mediaStreamRef.current, { mimeType: mt })
+          break
+        }
+      } catch { /* try next */ }
+    }
+    if (!mr) {
+      try { mr = new MediaRecorder(mediaStreamRef.current) } catch { return }
+    }
+    mr.ondataavailable = (e) => { if (e.data.size > 0) recordingChunks.current.push(e.data) }
+    mr.start(1000)
+    mediaRecorderRef.current = mr
+  }
+
+  async function stopAndUploadRecording(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const mr = mediaRecorderRef.current
+      if (!mr || mr.state === 'inactive') { resolve(); return }
+      mr.onstop = async () => {
+        if (recordingChunks.current.length === 0) { resolve(); return }
+        const blob = new Blob(recordingChunks.current, { type: mr.mimeType || 'video/webm' })
+        try {
+          const fd = new FormData()
+          fd.append('video', blob, `interview-${sessionDbIdRef.current ?? 'unknown'}.webm`)
+          if (sessionDbIdRef.current) fd.append('sessionId', sessionDbIdRef.current)
+          await fetch('/api/interviews/upload-recording', { method: 'POST', body: fd })
+        } catch { /* upload failure is silent — session already saved */ }
+        resolve()
+      }
+      try { mr.stop() } catch { resolve() }
+    })
   }
 
   function handleManualSubmit() {
