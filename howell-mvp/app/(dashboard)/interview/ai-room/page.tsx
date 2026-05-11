@@ -409,7 +409,6 @@ function CustomBotRoom({ applicationId, roundId }: { applicationId: string; roun
           const answer = answerBufferRef.current.trim()
           answerBufferRef.current = ''
           setCurrentAnswer('')
-          clearTimeout(silenceTimerRef.current)
           // Only submit if candidate said something; otherwise mark as no response
           submitAnswer(answer.split(' ').length >= 3 ? answer : '(No response — time expired)')
         }
@@ -451,36 +450,28 @@ function CustomBotRoom({ applicationId, roundId }: { applicationId: string; roun
     stopQuestionTimer()
   }
 
-  /* ── Manual submit by candidate (most reliable path) ── */
+  /* ── Manual submit by candidate (primary submission path) ── */
   function handleManualSubmit() {
     const answer = answerBufferRef.current.trim()
     if (!answer || phaseRef.current !== 'listening') return
-    clearTimeout(silenceTimerRef.current)
     answerBufferRef.current = ''
     setCurrentAnswer('')
     submitAnswer(answer)
   }
 
-  /* ── Candidate speech → buffer with generous silence detection ── */
+  /* ── Candidate speech → buffer only, NO silence auto-submit ──────────────
+     Silence detection is removed entirely because Chrome's built-in VAD
+     finalises transcript chunks on every natural pause mid-sentence, which
+     caused premature submission even with long timeouts.
+     Submission only happens via:
+       1. "Done Answering" button (candidate clicks when finished)
+       2. 2-minute question timer reaching 0
+  ─────────────────────────────────────────────────────────────────────── */
   function handleCandidateSpeech(text: string) {
     if (phaseRef.current !== 'listening') return
     answerBufferRef.current += ' ' + text
     setCurrentAnswer(answerBufferRef.current.trim())
-
-    // Reset silence timer on every new speech chunk
-    clearTimeout(silenceTimerRef.current)
-    silenceTimerRef.current = setTimeout(() => {
-      const answer = answerBufferRef.current.trim()
-      const wordCount = answer.split(/\s+/).filter(Boolean).length
-      // Only auto-submit on silence if candidate said at least 8 words
-      // This prevents premature submission during thinking pauses
-      if (wordCount >= 8) {
-        answerBufferRef.current = ''
-        setCurrentAnswer('')
-        submitAnswer(answer)
-      }
-      // If fewer words, just keep waiting — candidate is still formulating
-    }, 6000)  // 6 seconds of silence before auto-submit (was 2.8s)
+    // No silence timer — candidate controls submission via "Done Answering"
   }
 
   /* ── Avatar speaks ── */
@@ -856,10 +847,13 @@ function CustomBotRoom({ applicationId, roundId }: { applicationId: string; roun
                 <button
                   onClick={handleManualSubmit}
                   disabled={!currentAnswer}
-                  className="flex items-center gap-1.5 text-xs px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-white font-semibold disabled:opacity-30 transition"
+                  className={`flex items-center gap-1.5 text-sm px-5 py-2.5 rounded-lg font-bold transition
+                    ${currentAnswer
+                      ? 'bg-violet-600 hover:bg-violet-700 text-white shadow-md shadow-violet-200 animate-pulse'
+                      : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
                   title="Click when you've finished answering"
                 >
-                  <CheckCircle size={13} /> Done Answering
+                  <CheckCircle size={15} /> Done Answering
                 </button>
               )}
 
