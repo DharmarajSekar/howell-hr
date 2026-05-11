@@ -834,79 +834,18 @@ function CustomBotRoom({ applicationId, roundId }: { applicationId: string; roun
             </div>
           )}
 
-          {/* Score */}
-          {(isLive || phase === 'completed') && (
-            <div className="bg-white border border-gray-200 rounded-xl p-4 text-center">
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">AI Score</p>
-              <div className={`text-5xl font-black ${scoreColor}`}>{avgScore ?? '—'}</div>
-              <div className="text-xs text-gray-400 mt-0.5">/ 100</div>
-
-              {avgScore !== null && (
-                <div className="h-2 bg-gray-100 rounded-full mt-3 overflow-hidden">
-                  <div className={`h-full rounded-full transition-all duration-700 ${avgScore >= 75 ? 'bg-green-500' : avgScore >= 55 ? 'bg-amber-400' : 'bg-red-500'}`} style={{ width: `${avgScore}%` }} />
-                </div>
-              )}
-
-              {lastSignal && (
-                <span className={`mt-3 inline-block text-xs font-semibold px-2.5 py-1 rounded-full ${signalColors[lastSignal] ?? 'bg-gray-100 text-gray-600'}`}>
-                  {lastSignal}
-                </span>
-              )}
-
-              {/* Sparkline */}
-              {scores.length > 0 && (
-                <div className="flex items-end gap-0.5 h-8 mt-3 justify-center">
-                  {scores.slice(-12).map((s, i) => (
-                    <div key={i} className={`w-3 rounded-sm ${s >= 75 ? 'bg-green-400' : s >= 55 ? 'bg-amber-400' : 'bg-red-400'}`} style={{ height: `${Math.max(10, s)}%` }} title={`Q${i + 1}: ${s}`} />
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Final evaluation */}
-          {phase === 'completed' && evaluation && (
-            <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
-              <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">AI Evaluation</h3>
-              <div className={`flex items-center gap-2 text-sm font-semibold p-2.5 rounded-lg ${
-                ['Strong Hire','Hire'].includes(evaluation.recommendation) ? 'bg-green-50 text-green-700'
-                : evaluation.recommendation === 'Reject' ? 'bg-red-50 text-red-600'
-                : 'bg-amber-50 text-amber-700'
-              }`}>
-                {['Strong Hire','Hire'].includes(evaluation.recommendation) ? <ThumbsUp size={14} />
-                  : evaluation.recommendation === 'Reject' ? <ThumbsDown size={14} />
-                  : <Minus size={14} />}
-                {evaluation.recommendation}
-              </div>
-              {evaluation.summary && (
-                <p className="text-xs text-gray-600 leading-relaxed bg-gray-50 p-3 rounded-lg">{evaluation.summary}</p>
-              )}
-              {evaluation.strengths?.length > 0 && (
-                <div>
-                  <p className="text-xs font-semibold text-green-700 mb-1">✓ Strengths</p>
-                  <ul className="space-y-0.5">{evaluation.strengths.map((s: string, i: number) => (
-                    <li key={i} className="text-xs text-gray-600 flex gap-1.5"><span className="text-green-500 flex-shrink-0">•</span>{s}</li>
-                  ))}</ul>
-                </div>
-              )}
-              {evaluation.concerns?.length > 0 && (
-                <div>
-                  <p className="text-xs font-semibold text-red-600 mb-1">⚠ Concerns</p>
-                  <ul className="space-y-0.5">{evaluation.concerns.map((c: string, i: number) => (
-                    <li key={i} className="text-xs text-gray-600 flex gap-1.5"><span className="text-red-400 flex-shrink-0">•</span>{c}</li>
-                  ))}</ul>
-                </div>
-              )}
-            </div>
-          )}
+          {/* Score hidden from candidate — HR reviews scores on Video Recordings page */}
 
           {/* Completed */}
           {phase === 'completed' && (
             <div className="bg-green-50 border border-green-200 rounded-xl p-4 text-center">
               <CheckCircle size={28} className="text-green-500 mx-auto mb-2" />
               <p className="text-sm font-semibold text-green-700">Interview Complete</p>
-              <p className="text-xs text-gray-500 mt-1">Results saved to candidate profile.</p>
-              <Link href="/interviews" className="mt-3 inline-block text-xs text-violet-600 hover:underline">← Back to Interviews</Link>
+              <p className="text-xs text-gray-500 mt-1">Results saved. HR can review the score & evaluation in Video Recordings.</p>
+              <div className="mt-3 flex flex-col gap-2">
+                <Link href="/pre-screen/recordings" className="inline-block text-xs bg-violet-600 hover:bg-violet-700 text-white px-3 py-1.5 rounded-lg font-medium transition">View Score & Evaluation →</Link>
+                <Link href="/interviews" className="inline-block text-xs text-violet-600 hover:underline">← Back to Interviews</Link>
+              </div>
             </div>
           )}
 
