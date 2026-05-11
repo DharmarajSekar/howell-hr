@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter, useParams } from 'next/navigation'
-import { Sparkles, Loader2, ArrowLeft, Zap, CheckCircle, Save } from 'lucide-react'
+import { Sparkles, Loader2, ArrowLeft, Zap, CheckCircle, Save, Settings2 } from 'lucide-react'
 import Link from 'next/link'
 import SkillPicker from '@/components/jobs/SkillPicker'
 
@@ -335,6 +335,23 @@ export default function EditJobPage() {
               rows={3} placeholder="Preferred but not required…"
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 resize-none"/>
           </div>
+        </div>
+
+        {/* Configure Interview Rounds banner */}
+        <div className="bg-violet-50 border border-violet-200 rounded-xl px-4 py-3 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Settings2 size={15} className="text-violet-600 flex-shrink-0"/>
+            <div>
+              <p className="text-sm font-semibold text-violet-800">Interview Pipeline</p>
+              <p className="text-xs text-violet-600">Set up AI screening rounds, questions & scoring thresholds for this role</p>
+            </div>
+          </div>
+          <Link
+            href={`/settings/interview-config?jobId=${id}`}
+            className="flex items-center gap-1.5 bg-violet-600 hover:bg-violet-700 text-white text-xs font-semibold px-3 py-2 rounded-lg transition flex-shrink-0"
+          >
+            <Settings2 size={12}/> Configure Rounds →
+          </Link>
         </div>
 
         {/* Action buttons — vary by status */}

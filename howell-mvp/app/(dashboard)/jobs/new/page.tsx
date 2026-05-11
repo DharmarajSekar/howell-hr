@@ -161,11 +161,11 @@ export default function NewJobPage() {
         salary_max:     form.salary_max ? Number(form.salary_max) : undefined,
       }
 
-      const currentId = draftIdRef.current
+      let publishedId = draftIdRef.current
 
-      if (currentId) {
+      if (publishedId) {
         // Promote existing draft to active
-        await fetch(`/api/jobs/${currentId}`, {
+        await fetch(`/api/jobs/${publishedId}`, {
           method:  'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body:    JSON.stringify({ status: 'active' }),
@@ -183,10 +183,17 @@ export default function NewJobPage() {
           setSaving(false)
           return
         }
+        const data = await res.json()
+        publishedId = data?.id || null
       }
 
       router.refresh()
-      router.push('/jobs')
+      // Redirect to interview config so HR can set up interview rounds immediately
+      if (publishedId) {
+        router.push(`/settings/interview-config?jobId=${publishedId}`)
+      } else {
+        router.push('/jobs')
+      }
     } catch (err: any) {
       alert(`Error: ${err.message}`)
       setSaving(false)
@@ -380,7 +387,7 @@ export default function NewJobPage() {
           </button>
           <button type="submit" disabled={saving}
             className="flex-1 bg-red-700 hover:bg-red-800 text-white py-3 rounded-lg text-sm font-semibold transition disabled:opacity-60">
-            {saving ? 'Publishing…' : `Publish Job${skills.length > 0 ? ` · ${skills.length} skills` : ''}`}
+            {saving ? 'Publishing…' : `Publish & Configure Interviews →`}
           </button>
         </div>
       </form>

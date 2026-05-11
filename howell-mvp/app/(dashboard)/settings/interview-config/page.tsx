@@ -1,10 +1,12 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
+import { useSearchParams } from 'next/navigation'
 import {
   Bot, Users, Plus, Trash2, Save, ChevronDown, ChevronUp,
   Settings, Zap, Clock, Target, Shield, HelpCircle, CheckCircle,
-  AlertCircle, GripVertical, Video, X, AlertTriangle
+  AlertCircle, GripVertical, Video, X, AlertTriangle, ArrowLeft
 } from 'lucide-react'
+import Link from 'next/link'
 
 interface Round {
   id?: string
@@ -54,6 +56,9 @@ const DEFAULT_AI_QUESTIONS = [
 ]
 
 export default function InterviewConfigPage() {
+  const searchParams = useSearchParams()
+  const preselectedJobId = searchParams.get('jobId')
+
   const [jobs, setJobs]           = useState<any[]>([])
   const [selectedJob, setSelectedJob] = useState('')
   const [config, setConfig]       = useState<Config | null>(null)
@@ -79,14 +84,18 @@ export default function InterviewConfigPage() {
     reject_message: 'You do not meet the minimum requirements for this role.',
   })
 
-  // Load jobs on mount
+  // Load jobs on mount — pre-select from URL param if present
   useEffect(() => {
     fetch('/api/jobs').then(r => r.json()).then(d => {
       const list = Array.isArray(d) ? d : (d.jobs || [])
       setJobs(list)
-      if (list.length > 0) setSelectedJob(list[0].id)
+      if (preselectedJobId && list.some((j: any) => j.id === preselectedJobId)) {
+        setSelectedJob(preselectedJobId)
+      } else if (list.length > 0) {
+        setSelectedJob(list[0].id)
+      }
     })
-  }, [])
+  }, [preselectedJobId])
 
   // Load config when job changes
   const loadConfig = useCallback(async (jobId: string) => {
@@ -255,16 +264,35 @@ export default function InterviewConfigPage() {
     <div className="p-8 max-w-4xl mx-auto">
       {/* Header */}
       <div className="mb-8">
-        <div className="flex items-center gap-3 mb-1">
-          <div className="p-2 bg-red-50 rounded-lg">
-            <Settings size={20} className="text-red-600" />
+        <div className="flex items-center justify-between mb-1">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-red-50 rounded-lg">
+              <Settings size={20} className="text-red-600" />
+            </div>
+            <h1 className="text-2xl font-bold text-gray-900">Interview Pipeline Config</h1>
           </div>
-          <h1 className="text-2xl font-bold text-gray-900">Interview Pipeline Config</h1>
+          {preselectedJobId && (
+            <Link href="/jobs"
+              className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 border border-gray-200 px-3 py-1.5 rounded-lg transition">
+              <ArrowLeft size={13}/> Back to Jobs
+            </Link>
+          )}
         </div>
         <p className="text-gray-500 text-sm ml-11">
           Configure rounds, AI scheduling rules, and Tavus video settings per job role.
         </p>
       </div>
+
+      {/* New job success banner */}
+      {preselectedJobId && (
+        <div className="mb-6 bg-green-50 border border-green-200 rounded-xl px-4 py-3 flex items-start gap-3">
+          <CheckCircle size={16} className="text-green-600 flex-shrink-0 mt-0.5"/>
+          <div>
+            <p className="text-sm font-semibold text-green-800">Job published successfully!</p>
+            <p className="text-xs text-green-700 mt-0.5">Now configure the interview pipeline for this role — set up AI screening rounds, questions, and scoring thresholds below.</p>
+          </div>
+        </div>
+      )}
 
       {/* Job Selector */}
       <div className="bg-white border border-gray-200 rounded-xl p-5 mb-6 shadow-sm">
