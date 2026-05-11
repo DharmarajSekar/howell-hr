@@ -395,7 +395,7 @@ function CustomBotRoom({ applicationId, roundId }: { applicationId: string; roun
     return r
   }
 
-  /* ── Per-question countdown timer ── */
+  /* ── Per-question countdown timer (only starts for NEW questions) ── */
   function startQuestionTimer() {
     clearInterval(questionTimerRef.current)
     setTimeLeft(TIME_PER_QUESTION)
@@ -405,13 +405,13 @@ function CustomBotRoom({ applicationId, roundId }: { applicationId: string; roun
       setTimeLeft(remaining)
       if (remaining <= 0) {
         clearInterval(questionTimerRef.current)
-        // Auto-submit whatever the candidate has said so far
         if (phaseRef.current === 'listening') {
           const answer = answerBufferRef.current.trim()
           answerBufferRef.current = ''
           setCurrentAnswer('')
           clearTimeout(silenceTimerRef.current)
-          submitAnswer(answer || '(No response given)')
+          // Only submit if candidate said something; otherwise mark as no response
+          submitAnswer(answer.split(' ').length >= 3 ? answer : '(No response — time expired)')
         }
       }
     }, 1000)
@@ -421,6 +421,7 @@ function CustomBotRoom({ applicationId, roundId }: { applicationId: string; roun
     clearInterval(questionTimerRef.current)
   }
 
+  /* ── startListening: only starts speech recognition, does NOT reset question timer ── */
   function startListening() {
     if (isSpeakingRef.current) return
     shouldListenRef.current = true
@@ -430,7 +431,16 @@ function CustomBotRoom({ applicationId, roundId }: { applicationId: string; roun
       try { recognitionRef.current.start(); isListeningRef.current = true } catch { /* already started */ }
     }
     setPhaseSync('listening')
-    startQuestionTimer()
+    // NOTE: does NOT call startQuestionTimer — that only runs when a new question starts
+  }
+
+  /* ── startNewQuestion: called when a fresh question begins (resets timer + starts listening) ── */
+  function startNewQuestion() {
+    answerBufferRef.current = ''
+    setCurrentAnswer('')
+    setLiveText('')
+    startListening()
+    startQuestionTimer()   // ← timer resets ONLY here
   }
 
   function stopListening() {
@@ -441,19 +451,36 @@ function CustomBotRoom({ applicationId, roundId }: { applicationId: string; roun
     stopQuestionTimer()
   }
 
-  /* ── Candidate speech → buffer with silence detection ── */
+  /* ── Manual submit by candidate (most reliable path) ── */
+  function handleManualSubmit() {
+    const answer = answerBufferRef.current.trim()
+    if (!answer || phaseRef.current !== 'listening') return
+    clearTimeout(silenceTimerRef.current)
+    answerBufferRef.current = ''
+    setCurrentAnswer('')
+    submitAnswer(answer)
+  }
+
+  /* ── Candidate speech → buffer with generous silence detection ── */
   function handleCandidateSpeech(text: string) {
     if (phaseRef.current !== 'listening') return
     answerBufferRef.current += ' ' + text
     setCurrentAnswer(answerBufferRef.current.trim())
 
+    // Reset silence timer on every new speech chunk
     clearTimeout(silenceTimerRef.current)
     silenceTimerRef.current = setTimeout(() => {
       const answer = answerBufferRef.current.trim()
-      answerBufferRef.current = ''
-      setCurrentAnswer('')
-      if (answer.split(' ').length >= 3) submitAnswer(answer)
-    }, 2800)
+      const wordCount = answer.split(/\s+/).filter(Boolean).length
+      // Only auto-submit on silence if candidate said at least 8 words
+      // This prevents premature submission during thinking pauses
+      if (wordCount >= 8) {
+        answerBufferRef.current = ''
+        setCurrentAnswer('')
+        submitAnswer(answer)
+      }
+      // If fewer words, just keep waiting — candidate is still formulating
+    }, 6000)  // 6 seconds of silence before auto-submit (was 2.8s)
   }
 
   /* ── Avatar speaks ── */
@@ -526,11 +553,11 @@ function CustomBotRoom({ applicationId, roundId }: { applicationId: string; roun
         questionIndexRef.current = data.nextQuestionIndex
         setQuestionIndex(data.nextQuestionIndex)
         await avatarSpeak(data.speech)
-        startListening()
+        startNewQuestion()   // resets timer for the fresh question
       }
     } catch (err: any) {
       addLog(`Error: ${err.message}`)
-      startListening()
+      startListening()       // on error: just restart mic, don't reset timer
     }
   }
 
@@ -576,7 +603,7 @@ function CustomBotRoom({ applicationId, roundId }: { applicationId: string; roun
     const data = await res.json()
 
     if (data.speech) await avatarSpeak(data.speech)
-    startListening()
+    startNewQuestion()   // first question — start fresh timer
   }
 
   /* ── End interview manually ── */
@@ -795,7 +822,7 @@ function CustomBotRoom({ applicationId, roundId }: { applicationId: string; roun
                     {liveText && <p className="text-sm text-gray-400 italic">{liveText}</p>}
                     {currentAnswer && <p className="text-sm text-gray-800 mt-0.5">{currentAnswer}</p>}
                     {!liveText && !currentAnswer && (
-                      <p className="text-xs text-gray-400 italic">Speak your answer — pause 3 seconds when done…</p>
+                      <p className="text-xs text-gray-400 italic">Speak your answer, then click <strong>Done Answering</strong> when finished…</p>
                     )}
                   </div>
                 </div>
@@ -812,7 +839,7 @@ function CustomBotRoom({ applicationId, roundId }: { applicationId: string; roun
 
           {/* Controls */}
           {isLive && (
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               <button
                 onClick={toggleMic}
                 disabled={phase === 'speaking' || phase === 'processing'}
@@ -823,6 +850,18 @@ function CustomBotRoom({ applicationId, roundId }: { applicationId: string; roun
                 {micEnabled ? <Mic size={13} /> : <MicOff size={13} />}
                 {micEnabled ? 'Mute' : 'Unmute'}
               </button>
+
+              {/* Manual submit — primary way to submit, more reliable than silence detection */}
+              {phase === 'listening' && (
+                <button
+                  onClick={handleManualSubmit}
+                  disabled={!currentAnswer}
+                  className="flex items-center gap-1.5 text-xs px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-white font-semibold disabled:opacity-30 transition"
+                  title="Click when you've finished answering"
+                >
+                  <CheckCircle size={13} /> Done Answering
+                </button>
+              )}
 
               <span className="text-xs text-gray-400 bg-gray-50 px-2 py-1 rounded-lg">
                 Web Speech API · Free
