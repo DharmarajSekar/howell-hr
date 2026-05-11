@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import {
   Bot, Users, Plus, Trash2, Save, ChevronDown, ChevronUp,
@@ -55,7 +55,7 @@ const DEFAULT_AI_QUESTIONS = [
   'Where do you see yourself in the next 2-3 years?',
 ]
 
-export default function InterviewConfigPage() {
+function InterviewConfigInner() {
   const searchParams = useSearchParams()
   const preselectedJobId = searchParams.get('jobId')
 
@@ -558,6 +558,14 @@ export default function InterviewConfigPage() {
         </div>
       )}
     </div>
+  )
+}
+
+export default function InterviewConfigPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-gray-400 text-sm">Loading…</div>}>
+      <InterviewConfigInner />
+    </Suspense>
   )
 }
 
