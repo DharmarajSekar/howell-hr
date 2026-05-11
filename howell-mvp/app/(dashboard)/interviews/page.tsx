@@ -4,7 +4,7 @@ import {
   Calendar, Clock, Video, Users, Star, Bot, CheckCircle, XCircle,
   Zap, Settings, ExternalLink, RefreshCw, ChevronRight, AlertCircle,
   Trophy, ThumbsUp, ThumbsDown, Minus, MessageSquare, Sparkles,
-  Loader2, Phone, X,
+  Loader2, Phone, X, Copy, Send,
 } from 'lucide-react'
 import { formatDateTime } from '@/lib/utils'
 import type { Interview } from '@/types'
@@ -850,20 +850,49 @@ function AISessionCard({ session: s }: { session: AISession }) {
               </span>
             )}
           </div>
-          <div className="mt-3 flex items-center gap-2">
-            <Link href={`/interview/ai-room?sessionId=${s.id}`}
-              className="flex items-center gap-1.5 text-xs bg-violet-600 text-white px-3 py-1.5 rounded-lg hover:bg-violet-700 transition">
-              <Video size={12} /> View Session <ChevronRight size={11}/>
-            </Link>
-            {s.tavus_conversation_url && s.status !== 'completed' && (
-              <a href={s.tavus_conversation_url} target="_blank" rel="noopener noreferrer"
-                className="flex items-center gap-1.5 text-xs border border-violet-300 text-violet-600 px-3 py-1.5 rounded-lg hover:bg-violet-50 transition">
-                <ExternalLink size={12}/> Join Live
-              </a>
+          <div className="mt-3 flex items-center gap-2 flex-wrap">
+            {s.status === 'completed' ? (
+              /* HR views results after candidate finishes */
+              <Link href={`/pre-screen/recordings`}
+                className="flex items-center gap-1.5 text-xs bg-violet-600 text-white px-3 py-1.5 rounded-lg hover:bg-violet-700 transition">
+                <Video size={12}/> View Results <ChevronRight size={11}/>
+              </Link>
+            ) : (
+              /* HR copies the candidate interview link to share */
+              <CopyLinkButton sessionId={s.id}/>
             )}
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+/* ── Copy Candidate Link Button ───────────────────────────────────────────── */
+function CopyLinkButton({ sessionId }: { sessionId: string }) {
+  const [copied, setCopied] = useState(false)
+
+  function copyLink() {
+    const url = `${window.location.origin}/candidate-interview?sessionId=${sessionId}`
+    navigator.clipboard.writeText(url).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 3000)
+    })
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <button
+        onClick={copyLink}
+        className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-semibold transition
+          ${copied
+            ? 'bg-green-100 text-green-700 border border-green-300'
+            : 'bg-violet-600 hover:bg-violet-700 text-white'}`}
+      >
+        {copied ? <CheckCircle size={12}/> : <Copy size={12}/>}
+        {copied ? 'Link Copied!' : 'Copy Candidate Link'}
+      </button>
+      <span className="text-[10px] text-gray-400">Share this with the candidate</span>
     </div>
   )
 }
@@ -976,9 +1005,9 @@ function RankingsView({ sessions }: { sessions: AISession[] }) {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <Link href={`/interview/ai-room?sessionId=${s.id}`}
+                        <Link href={`/pre-screen/recordings`}
                           className="text-xs text-violet-600 hover:text-violet-800 font-semibold flex items-center gap-1 justify-end">
-                          View <ChevronRight size={12}/>
+                          Results <ChevronRight size={12}/>
                         </Link>
                       </td>
                     </tr>

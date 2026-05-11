@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { NextResponse, type NextRequest } from 'next/server'
 
-const PUBLIC_PATHS = ['/login', '/apply', '/video-prescreen']
+const PUBLIC_PATHS = ['/login', '/apply', '/video-prescreen', '/candidate-interview']
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
