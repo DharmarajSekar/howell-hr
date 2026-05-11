@@ -917,7 +917,7 @@ function CustomBotRoom({ applicationId, roundId }: { applicationId: string; roun
               { label: 'Animated Avatar',    sub: 'CSS/SVG · zero cost' },
               { label: 'Web Speech API',     sub: 'Browser STT · zero cost' },
               { label: 'Speech Synthesis',   sub: 'Browser TTS · zero cost' },
-              { label: 'Claude AI',          sub: 'Interview logic' },
+              { label: 'Gemini AI',           sub: 'Interview logic · free' },
             ].map(({ label, sub }) => (
               <div key={label} className="flex items-center gap-2">
                 <div className="w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0" />
@@ -978,13 +978,13 @@ function LegacySessionViewer({ sessionId }: { sessionId: string }) {
 
   async function retryWithTavus() {
     setRetrying(true)
-    try {
-      await fetch('/api/interviews/ai-session', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: session.id, status: 'cancelled' }) })
-      const res  = await fetch('/api/interviews/start-ai-interview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ applicationId: session.application_id }) })
-      const data = await res.json()
-      if (data.sessionId) window.location.href = `/interview/ai-room?sessionId=${data.sessionId}`
-      else alert(`Error: ${data.error ?? 'Unknown'}`)
-    } finally { setRetrying(false) }
+    // Redirect to the free browser-based AI bot (Gemini + Web Speech API)
+    if (session.application_id) {
+      window.location.href = `/interview/ai-room?mode=custom&applicationId=${session.application_id}`
+    } else {
+      alert('No application linked to this session. Please start the interview from a candidate profile.')
+      setRetrying(false)
+    }
   }
 
   return (
