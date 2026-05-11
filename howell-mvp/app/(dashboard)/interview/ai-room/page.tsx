@@ -256,6 +256,9 @@ interface TranscriptEntry {
 ───────────────────────────────────────────────────────────────────────────── */
 function CustomBotRoom({ applicationId, roundId }: { applicationId: string; roundId: string | null }) {
 
+  /* ── Per-question time limit (seconds) ── */
+  const TIME_PER_QUESTION = 120  // 2 minutes per question
+
   /* ── State ── */
   const [phase,          setPhase]          = useState<Phase>('setup')
   const [log,            setLog]            = useState<string[]>([])
@@ -276,12 +279,14 @@ function CustomBotRoom({ applicationId, roundId }: { applicationId: string; roun
   const [browserOk,      setBrowserOk]      = useState(true)
   const [browserMsg,     setBrowserMsg]     = useState('')
   const [avatarState,    setAvatarState]    = useState<AvatarState>('idle')
+  const [timeLeft,       setTimeLeft]       = useState<number>(TIME_PER_QUESTION)
 
   /* ── Refs ── */
   const webcamVideoRef      = useRef<HTMLVideoElement>(null)
   const recognitionRef      = useRef<SpeechRecognition | null>(null)
   const micStreamRef        = useRef<MediaStream | null>(null)
   const silenceTimerRef     = useRef<ReturnType<typeof setTimeout>>()
+  const questionTimerRef    = useRef<ReturnType<typeof setInterval>>()
   const answerBufferRef     = useRef('')
   const questionIndexRef    = useRef(0)
   const scoresRef           = useRef<number[]>([])
@@ -390,6 +395,32 @@ function CustomBotRoom({ applicationId, roundId }: { applicationId: string; roun
     return r
   }
 
+  /* ── Per-question countdown timer ── */
+  function startQuestionTimer() {
+    clearInterval(questionTimerRef.current)
+    setTimeLeft(TIME_PER_QUESTION)
+    let remaining = TIME_PER_QUESTION
+    questionTimerRef.current = setInterval(() => {
+      remaining -= 1
+      setTimeLeft(remaining)
+      if (remaining <= 0) {
+        clearInterval(questionTimerRef.current)
+        // Auto-submit whatever the candidate has said so far
+        if (phaseRef.current === 'listening') {
+          const answer = answerBufferRef.current.trim()
+          answerBufferRef.current = ''
+          setCurrentAnswer('')
+          clearTimeout(silenceTimerRef.current)
+          submitAnswer(answer || '(No response given)')
+        }
+      }
+    }, 1000)
+  }
+
+  function stopQuestionTimer() {
+    clearInterval(questionTimerRef.current)
+  }
+
   function startListening() {
     if (isSpeakingRef.current) return
     shouldListenRef.current = true
@@ -399,6 +430,7 @@ function CustomBotRoom({ applicationId, roundId }: { applicationId: string; roun
       try { recognitionRef.current.start(); isListeningRef.current = true } catch { /* already started */ }
     }
     setPhaseSync('listening')
+    startQuestionTimer()
   }
 
   function stopListening() {
@@ -406,6 +438,7 @@ function CustomBotRoom({ applicationId, roundId }: { applicationId: string; roun
     isListeningRef.current  = false
     try { recognitionRef.current?.stop() } catch { /* ignore */ }
     setLiveText('')
+    stopQuestionTimer()
   }
 
   /* ── Candidate speech → buffer with silence detection ── */
@@ -572,6 +605,7 @@ function CustomBotRoom({ applicationId, roundId }: { applicationId: string; roun
   useEffect(() => {
     return () => {
       clearTimeout(silenceTimerRef.current)
+      clearInterval(questionTimerRef.current)
       shouldListenRef.current = false
       try { recognitionRef.current?.stop() } catch { /* ignore */ }
       speechSynthesis.cancel()
@@ -719,14 +753,36 @@ function CustomBotRoom({ applicationId, roundId }: { applicationId: string; roun
           {/* Live Q + candidate speech display */}
           {isLive && (
             <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
-              {/* Current question */}
+              {/* Current question + countdown timer */}
               <div className="flex items-start gap-2.5">
                 <div className="w-6 h-6 rounded-full bg-violet-100 flex items-center justify-center flex-shrink-0 mt-0.5">
                   <Bot size={12} className="text-violet-600" />
                 </div>
-                <p className="text-sm text-gray-700 leading-relaxed font-medium">
+                <p className="text-sm text-gray-700 leading-relaxed font-medium flex-1">
                   Q{questionIndex + 1}: {questions[questionIndex] ?? '…'}
                 </p>
+                {/* Countdown timer — only show while candidate is answering */}
+                {phase === 'listening' && (
+                  <div className={`flex-shrink-0 flex flex-col items-center ml-3 ${
+                    timeLeft <= 30 ? 'text-red-500' : timeLeft <= 60 ? 'text-amber-500' : 'text-gray-400'
+                  }`}>
+                    <span className={`text-lg font-black tabular-nums leading-none ${timeLeft <= 10 ? 'animate-pulse' : ''}`}>
+                      {Math.floor(timeLeft / 60)}:{String(timeLeft % 60).padStart(2, '0')}
+                    </span>
+                    <span className="text-[9px] font-medium uppercase tracking-wide">left</span>
+                    {/* Circular progress */}
+                    <svg width="32" height="32" viewBox="0 0 36 36" className="mt-1 -rotate-90">
+                      <circle cx="18" cy="18" r="14" fill="none" stroke="currentColor" strokeOpacity="0.15" strokeWidth="3"/>
+                      <circle
+                        cx="18" cy="18" r="14" fill="none" stroke="currentColor" strokeWidth="3"
+                        strokeDasharray={`${2 * Math.PI * 14}`}
+                        strokeDashoffset={`${2 * Math.PI * 14 * (1 - timeLeft / TIME_PER_QUESTION)}`}
+                        strokeLinecap="round"
+                        style={{ transition: 'stroke-dashoffset 1s linear' }}
+                      />
+                    </svg>
+                  </div>
+                )}
               </div>
 
               {/* Live transcription */}
@@ -830,6 +886,10 @@ function CustomBotRoom({ applicationId, roundId }: { applicationId: string; roun
               </div>
               <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
                 <div className="h-full bg-violet-500 rounded-full transition-all duration-500" style={{ width: `${progressPct}%` }} />
+              </div>
+              <div className="mt-2 flex items-center justify-between text-[10px] text-gray-400">
+                <span>⏱ {Math.floor(TIME_PER_QUESTION / 60)} min per question</span>
+                <span>{totalQ * Math.floor(TIME_PER_QUESTION / 60)} min total</span>
               </div>
             </div>
           )}
