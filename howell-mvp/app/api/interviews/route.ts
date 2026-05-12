@@ -8,9 +8,13 @@ export async function GET(req: Request) {
 }
 export async function POST(req: Request) {
   const data = await req.json()
+
+  // Separate notification-only fields from DB fields
+  const { candidate_name, candidate_email, candidate_phone, job_title, ...dbFields } = data
+
   let iv: any
   try {
-    iv = await db.interviews.create(data)
+    iv = await db.interviews.create(dbFields)
   } catch (e: any) {
     console.error('Interview create error:', e.message)
     return NextResponse.json({ error: e.message }, { status: 500 })
