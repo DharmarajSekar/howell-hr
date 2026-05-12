@@ -260,10 +260,10 @@ function InlineSchedulerModal({ application, onClose, onScheduled }: {
 }) {
   const candidate = application.candidate
   const job       = application.job
-  const tomorrow  = new Date(Date.now() + 86400000).toISOString().split('T')[0]
+  const today     = new Date().toISOString().split('T')[0]
 
   const [form, setForm] = useState({
-    date:         tomorrow,
+    date:         today,
     time:         '10:00',
     duration:     60,
     type:         'video' as 'video' | 'in_person' | 'phone',
@@ -335,7 +335,7 @@ function InlineSchedulerModal({ application, onClose, onScheduled }: {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold text-gray-600 mb-1">Date</label>
-              <input type="date" value={form.date} min={tomorrow}
+              <input type="date" value={form.date} min={today}
                 onChange={e => set('date', e.target.value)} required
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-red-400"/>
             </div>
@@ -397,6 +397,7 @@ export default function InterviewsPage() {
   const [queue,        setQueue]        = useState<QueueItem[]>([])
   const [aiSessions,   setAISessions]   = useState<AISession[]>([])
   const [pendingApps,  setPendingApps]  = useState<any[]>([])  // interview_scheduled apps with no interview entry
+  const [shortlisted,  setShortlisted]  = useState<any[]>([])  // shortlisted apps ready to be scheduled
   const [loading,      setLoading]      = useState(true)
   const [tab,          setTab]          = useState<'scheduled' | 'ai-queue' | 'ai-sessions' | 'rankings'>('scheduled')
   const [approving,    setApproving]    = useState<string | null>(null)
@@ -406,11 +407,12 @@ export default function InterviewsPage() {
   const loadAll = useCallback(async () => {
     setLoading(true)
     try {
-      const [ivRes, queueRes, sessRes, appsRes] = await Promise.all([
+      const [ivRes, queueRes, sessRes, appsRes, shortRes] = await Promise.all([
         fetch('/api/interviews').then(r => r.json()),
         fetch('/api/interviews/auto-schedule').then(r => r.json()),
         fetch('/api/interviews/ai-sessions').then(r => r.json()),
         fetch('/api/applications?status=interview_scheduled').then(r => r.json()).catch(() => []),
+        fetch('/api/applications?status=shortlisted').then(r => r.json()).catch(() => []),
       ])
       const ivList = Array.isArray(ivRes) ? ivRes : []
       setInterviews(ivList)
@@ -424,6 +426,10 @@ export default function InterviewsPage() {
         a.status === 'interview_scheduled' && !scheduledAppIds.has(a.id)
       )
       setPendingApps(pending)
+
+      // Shortlisted candidates ready to be scheduled
+      const allShortlisted = Array.isArray(shortRes) ? shortRes : (shortRes.applications || [])
+      setShortlisted(allShortlisted)
     } finally {
       setLoading(false)
     }
@@ -474,6 +480,7 @@ export default function InterviewsPage() {
           <h1 className="text-2xl font-bold text-gray-900">Interviews</h1>
           <p className="text-gray-500 text-sm mt-1">
             {upcoming.length} upcoming · {completed.length} completed
+            {shortlisted.length > 0 && <span className="text-violet-600 font-medium"> · {shortlisted.length} shortlisted</span>}
             {pendingApps.length > 0 && <span className="text-amber-600 font-medium"> · {pendingApps.length} pending scheduling</span>}
             {' · '}{queue.length} awaiting approval · {aiSessions.filter(s => s.status === 'completed' && s.ai_score !== null).length} scored
           </p>
@@ -492,7 +499,7 @@ export default function InterviewsPage() {
       {/* Tabs */}
       <div className="flex gap-1 bg-gray-100 p-1 rounded-xl mb-6 w-fit">
         {[
-          { key: 'scheduled',   label: 'Manual Interviews', count: upcoming.length + completed.length + pendingApps.length },
+          { key: 'scheduled',   label: 'Manual Interviews', count: upcoming.length + completed.length + pendingApps.length + shortlisted.length },
           { key: 'ai-queue',    label: 'AI Approval Queue', count: queue.length, highlight: queue.length > 0 },
           { key: 'ai-sessions', label: 'AI Sessions',       count: aiSessions.length },
           { key: 'rankings',    label: '🏆 Rankings',       count: aiSessions.filter(s => s.status === 'completed' && s.ai_score !== null).length },
@@ -518,6 +525,44 @@ export default function InterviewsPage() {
           {/* Manual Interviews */}
           {tab === 'scheduled' && (
             <div className="space-y-6">
+              {/* Shortlisted — ready to schedule */}
+              {shortlisted.length > 0 && (
+                <section>
+                  <div className="flex items-center gap-2 mb-3">
+                    <Star size={14} className="text-violet-500" />
+                    <h2 className="text-sm font-semibold text-violet-700 uppercase tracking-wide">
+                      Shortlisted — Ready to Schedule ({shortlisted.length})
+                    </h2>
+                  </div>
+                  <div className="bg-violet-50 border border-violet-200 rounded-xl p-3 text-xs text-violet-700 mb-3">
+                    These candidates have been shortlisted and are waiting for an interview to be scheduled.
+                  </div>
+                  <div className="space-y-3">
+                    {shortlisted.map((app: any) => (
+                      <div key={app.id} className="bg-white border border-violet-200 rounded-xl shadow-sm p-4 flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-full bg-violet-100 text-violet-700 flex items-center justify-center text-sm font-bold flex-shrink-0">
+                            {(app.candidate?.full_name || '?').charAt(0)}
+                          </div>
+                          <div>
+                            <div className="font-semibold text-gray-900 text-sm">{app.candidate?.full_name || 'Unknown'}</div>
+                            <div className="text-xs text-gray-500">{app.job?.title || 'Unknown Role'}</div>
+                            {app.candidate?.email && (
+                              <div className="text-xs text-gray-400">{app.candidate.email}</div>
+                            )}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => setScheduleApp(app)}
+                          className="flex items-center gap-1.5 text-xs bg-violet-600 hover:bg-violet-700 text-white px-3 py-1.5 rounded-lg transition font-semibold flex-shrink-0">
+                          <Calendar size={12}/> Schedule Interview
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
               {/* Pending Scheduling section */}
               {pendingApps.length > 0 && (
                 <section>
@@ -573,7 +618,7 @@ export default function InterviewsPage() {
                   </div>
                 </section>
               )}
-              {interviews.length === 0 && pendingApps.length === 0 && (
+              {interviews.length === 0 && pendingApps.length === 0 && shortlisted.length === 0 && (
                 <div className="text-center py-16 text-gray-400 text-sm">No interviews scheduled yet.</div>
               )}
             </div>
