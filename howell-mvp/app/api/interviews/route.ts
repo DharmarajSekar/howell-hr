@@ -9,8 +9,17 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   const data = await req.json()
 
-  // Separate notification-only fields from DB fields
-  const { candidate_name, candidate_email, candidate_phone, job_title, ...dbFields } = data
+  // Only send columns that exist in the interviews table
+  const { candidate_name, candidate_email, candidate_phone, job_title } = data
+  const dbFields = {
+    application_id:   data.application_id,
+    scheduled_at:     data.scheduled_at,
+    duration_minutes: data.duration_minutes ?? 60,
+    interview_type:   data.interview_type ?? 'video',
+    meeting_link:     data.meeting_link ?? null,
+    // notes column does not exist — stored in feedback if provided
+    ...(data.notes ? { feedback: data.notes } : {}),
+  }
 
   let iv: any
   try {
