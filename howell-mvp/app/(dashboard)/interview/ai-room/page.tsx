@@ -108,8 +108,8 @@ function CopyLinkButton({ sessionId, candidateName }: { sessionId: string; candi
   )
 }
 
-function SessionCard({ session }: { session: Session }) {
-  const [expanded, setExpanded] = useState(false)
+function SessionCard({ session, autoExpand }: { session: Session; autoExpand?: boolean }) {
+  const [expanded, setExpanded] = useState(autoExpand ?? false)
   const name = session.application?.candidate?.full_name || 'Candidate'
   const job  = session.application?.job?.title || 'Unknown Role'
   const score = session.ai_score
@@ -215,11 +215,17 @@ function AIRoomInner() {
   const [sessions,  setSessions]  = useState<Session[]>([])
   const [loading,   setLoading]   = useState(true)
   const [filter,    setFilter]    = useState<'all'|'pending'|'completed'>('all')
+  const searchParams = useSearchParams()
+  const highlightId  = searchParams.get('sessionId')
 
   useEffect(() => {
     fetch('/api/interviews/ai-sessions')
       .then(r => r.json())
-      .then(d => setSessions(Array.isArray(d) ? d : []))
+      .then(d => {
+        // API returns { sessions: [...] }  — handle both shapes
+        const list = Array.isArray(d) ? d : (d?.sessions || [])
+        setSessions(list)
+      })
       .finally(() => setLoading(false))
   }, [])
 
@@ -305,7 +311,7 @@ function AIRoomInner() {
         </div>
       ) : (
         <div className="space-y-3">
-          {filtered.map(s => <SessionCard key={s.id} session={s}/>)}
+          {filtered.map(s => <SessionCard key={s.id} session={s} autoExpand={s.id === highlightId}/>)}
         </div>
       )}
     </div>

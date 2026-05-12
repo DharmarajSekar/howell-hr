@@ -9,6 +9,23 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   const data = await req.json()
   const iv = await db.interviews.create(data)
+
+  // Update application status to interview_scheduled
+  if (data.application_id) {
+    try {
+      const { createClient } = await import('@supabase/supabase-js')
+      const svc = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!
+      )
+      await svc.from('applications')
+        .update({ status: 'interview_scheduled', updated_at: new Date().toISOString() })
+        .eq('id', data.application_id)
+    } catch (e: any) {
+      console.error('Failed to update application status:', e.message)
+    }
+  }
+
   if (data.candidate_name) {
     await db.notifications.create({
       recipient_name: data.candidate_name,
