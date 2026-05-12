@@ -78,6 +78,12 @@ export default function TalentPoolClient() {
   const [referralSaving,  setReferralSaving]  = useState(false)
   const [referralSuccess, setReferralSuccess] = useState(false)
 
+  // Pre-Screen Send modal
+  const [showPreScreen,     setShowPreScreen]     = useState(false)
+  const [preScreenJobId,    setPreScreenJobId]    = useState('')
+  const [preScreenLink,     setPreScreenLink]     = useState<string|null>(null)
+  const [preScreenCreating, setPreScreenCreating] = useState(false)
+
   // Resume parse modal
   const [showResumeParse, setShowResumeParse] = useState(false)
   const [resumeText,      setResumeText]      = useState('')
@@ -535,6 +541,13 @@ export default function TalentPoolClient() {
                       <Copy size={14}/> Find Similar
                     </button>
                   </div>
+
+                  {/* Send Pre-Screen */}
+                  <button
+                    onClick={() => { setPreScreenJobId(''); setPreScreenLink(null); setShowPreScreen(true) }}
+                    className="w-full flex items-center justify-center gap-2 border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 py-2.5 rounded-xl text-sm font-medium transition mt-2">
+                    <Zap size={14}/> Send Pre-Screen Interview
+                  </button>
                 </div>
               </div>
             ) : (
@@ -749,6 +762,135 @@ export default function TalentPoolClient() {
                   </div>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Send Pre-Screen Modal ───────────────────────────── */}
+      {showPreScreen && selected && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
+            <div className="p-6 border-b border-gray-100 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-gray-900">Send Pre-Screen Interview</h2>
+                <p className="text-sm text-gray-500 mt-0.5">Generate a link for <strong>{selected.full_name}</strong> to answer pre-screen questions</p>
+              </div>
+              <button onClick={() => setShowPreScreen(false)} className="text-gray-400 hover:text-gray-600 transition"><X size={20}/></button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {!preScreenLink ? (
+                <>
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex gap-2">
+                    <Zap size={14} className="text-amber-500 flex-shrink-0 mt-0.5"/>
+                    <p className="text-xs text-amber-700">The candidate will receive a private link and answer 5 role-specific questions. Their responses are AI-scored and appear in your Pre-Screen Bot dashboard.</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Select Job Role *</label>
+                    <select value={preScreenJobId} onChange={e => setPreScreenJobId(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500">
+                      <option value="">Select a job posting…</option>
+                      {jobs.filter((j: any) => j.status === 'active').map((j: any) => (
+                        <option key={j.id} value={j.id}>{j.title} — {j.department}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <button
+                    disabled={!preScreenJobId || preScreenCreating}
+                    onClick={async () => {
+                      if (!preScreenJobId || !selected) return
+                      setPreScreenCreating(true)
+                      try {
+                        // Create or find application for this candidate + job
+                        const appRes = await fetch('/api/applications', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            job_id: preScreenJobId,
+                            candidate_id: selected.id,
+                            status: 'screening',
+                            notes: 'talent_pool_apply',
+                          }),
+                        })
+                        const app = await appRes.json()
+                        const job = jobs.find((j: any) => j.id === preScreenJobId)
+                        // Create pre-screen session
+                        const psRes = await fetch('/api/pre-screen', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            application_id: app.id,
+                            candidate_name: selected.full_name,
+                            job_title: job?.title || '',
+                          }),
+                        })
+                        const ps = await psRes.json()
+                        const link = `${window.location.origin}/text-prescreen/${ps.id}`
+                        setPreScreenLink(link)
+                      } catch { }
+                      setPreScreenCreating(false)
+                    }}
+                    className="w-full bg-amber-500 hover:bg-amber-600 text-white py-2.5 rounded-xl text-sm font-semibold transition disabled:opacity-50 flex items-center justify-center gap-2">
+                    {preScreenCreating ? <><Loader2 size={14} className="animate-spin"/> Generating Link…</> : <><Zap size={14}/> Generate Pre-Screen Link</>}
+                  </button>
+                </>
+              ) : (
+                <div className="space-y-4">
+                  <div className="bg-green-50 border border-green-200 rounded-xl p-3 flex gap-2">
+                    <CheckCircle size={14} className="text-green-600 flex-shrink-0 mt-0.5"/>
+                    <p className="text-xs text-green-700 font-medium">Pre-screen session created! Share the link below with <strong>{selected.full_name}</strong>.</p>
+                  </div>
+
+                  {/* Link box */}
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1.5">Pre-Screen Link</label>
+                    <div className="flex gap-2">
+                      <input readOnly value={preScreenLink}
+                        className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-xs text-gray-700 bg-gray-50 focus:outline-none"/>
+                      <button onClick={() => navigator.clipboard.writeText(preScreenLink)}
+                        className="bg-gray-800 text-white px-3 py-2 rounded-lg text-xs font-medium hover:bg-gray-900 transition flex items-center gap-1">
+                        <Copy size={12}/> Copy
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Email template */}
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1.5">📧 Email Template</label>
+                    <textarea readOnly rows={6}
+                      className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-xs text-gray-700 bg-gray-50 resize-none focus:outline-none"
+                      value={`Subject: Next Step — Pre-Screen Interview for ${jobs.find((j:any)=>j.id===preScreenJobId)?.title || 'the role'} at Howell Group\n\nDear ${selected.full_name},\n\nThank you for your interest in the ${jobs.find((j:any)=>j.id===preScreenJobId)?.title || 'position'} at Howell Group.\n\nAs the next step, please complete a short AI pre-screen interview (5 questions, ~10 minutes) using the link below:\n\n${preScreenLink}\n\nBest regards,\nHR Team — Howell Group`}
+                    />
+                    <button onClick={() => navigator.clipboard.writeText(`Subject: Next Step — Pre-Screen Interview for ${jobs.find((j:any)=>j.id===preScreenJobId)?.title || 'the role'} at Howell Group\n\nDear ${selected.full_name},\n\nThank you for your interest in the ${jobs.find((j:any)=>j.id===preScreenJobId)?.title || 'position'} at Howell Group.\n\nAs the next step, please complete a short AI pre-screen interview (5 questions, ~10 minutes) using the link below:\n\n${preScreenLink}\n\nBest regards,\nHR Team — Howell Group`)}
+                      className="mt-1.5 text-xs text-blue-600 hover:underline flex items-center gap-1">
+                      <Copy size={11}/> Copy email text
+                    </button>
+                  </div>
+
+                  {/* WhatsApp template */}
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1.5">💬 WhatsApp Message</label>
+                    <textarea readOnly rows={3}
+                      className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-xs text-gray-700 bg-gray-50 resize-none focus:outline-none"
+                      value={`Hi ${selected.full_name}, this is HR from Howell Group. Please complete your pre-screen interview for the ${jobs.find((j:any)=>j.id===preScreenJobId)?.title || 'role'} using this link: ${preScreenLink}`}
+                    />
+                    <button onClick={() => navigator.clipboard.writeText(`Hi ${selected.full_name}, this is HR from Howell Group. Please complete your pre-screen interview for the ${jobs.find((j:any)=>j.id===preScreenJobId)?.title || 'role'} using this link: ${preScreenLink}`)}
+                      className="mt-1.5 text-xs text-green-600 hover:underline flex items-center gap-1">
+                      <Copy size={11}/> Copy WhatsApp text
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="p-6 border-t border-gray-100">
+              <button onClick={() => { setShowPreScreen(false); setPreScreenLink(null) }}
+                className="w-full border border-gray-300 text-gray-700 py-2.5 rounded-lg text-sm font-medium hover:bg-gray-50 transition">
+                {preScreenLink ? 'Done' : 'Cancel'}
+              </button>
             </div>
           </div>
         </div>
