@@ -8,7 +8,16 @@ export async function GET(req: Request) {
 }
 export async function POST(req: Request) {
   const data = await req.json()
-  const iv = await db.interviews.create(data)
+  let iv: any
+  try {
+    iv = await db.interviews.create(data)
+  } catch (e: any) {
+    console.error('Interview create error:', e.message)
+    return NextResponse.json({ error: e.message }, { status: 500 })
+  }
+  if (!iv) {
+    return NextResponse.json({ error: 'Interview could not be saved — check Supabase interviews table exists' }, { status: 500 })
+  }
 
   // Update application status to interview_scheduled
   if (data.application_id) {

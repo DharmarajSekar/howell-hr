@@ -270,32 +270,49 @@ function InlineSchedulerModal({ application, onClose, onScheduled }: {
     meeting_link: 'https://meet.google.com/new',
     notes:        '',
   })
-  const [saving, setSaving] = useState(false)
+  const [saving,  setSaving]  = useState(false)
+  const [error,   setError]   = useState<string | null>(null)
+  const [success, setSuccess] = useState(false)
 
   function set(k: string, v: any) { setForm(f => ({ ...f, [k]: v })) }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setSaving(true)
-    const scheduled_at = new Date(`${form.date}T${form.time}:00`).toISOString()
-    await fetch('/api/interviews', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        application_id:   application.id,
-        scheduled_at,
-        duration_minutes: form.duration,
-        interview_type:   form.type,
-        meeting_link:     form.type === 'video' ? form.meeting_link : null,
-        notes:            form.notes,
-        candidate_name:   candidate?.full_name,
-        candidate_email:  candidate?.email,
-        candidate_phone:  candidate?.phone,
-        job_title:        job?.title,
-      }),
-    })
-    setSaving(false)
-    onScheduled()
+    setError(null)
+    try {
+      const scheduled_at = new Date(`${form.date}T${form.time}:00`).toISOString()
+      const res = await fetch('/api/interviews', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          application_id:   application.id,
+          scheduled_at,
+          duration_minutes: form.duration,
+          interview_type:   form.type,
+          meeting_link:     form.type === 'video' ? form.meeting_link : null,
+          notes:            form.notes,
+          candidate_name:   candidate?.full_name,
+          candidate_email:  candidate?.email,
+          candidate_phone:  candidate?.phone || null,
+          job_title:        job?.title,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok || data?.error) {
+        setError(data?.error || `Server error ${res.status} — check Supabase interviews table schema`)
+        setSaving(false)
+        return
+      }
+      // Success
+      setSuccess(true)
+      setTimeout(() => {
+        onScheduled()
+      }, 800)
+    } catch (err: any) {
+      setError(err.message || 'Network error')
+      setSaving(false)
+    }
   }
 
   return (
@@ -375,16 +392,29 @@ function InlineSchedulerModal({ application, onClose, onScheduled }: {
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-red-400 resize-none"/>
           </div>
 
-          <div className="flex gap-3 pt-1">
-            <button type="button" onClick={onClose}
-              className="flex-1 border border-gray-200 text-gray-600 py-2.5 rounded-xl text-sm font-medium hover:bg-gray-50 transition">
-              Cancel
-            </button>
-            <button type="submit" disabled={saving}
-              className="flex-1 bg-red-700 hover:bg-red-800 text-white py-2.5 rounded-xl text-sm font-semibold transition disabled:opacity-60 flex items-center justify-center gap-2">
-              {saving ? <><Loader2 size={14} className="animate-spin"/> Saving…</> : <><Calendar size={14}/> Schedule & Notify</>}
-            </button>
-          </div>
+          {error && (
+            <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-xs text-red-700 flex items-start gap-2">
+              <AlertCircle size={13} className="flex-shrink-0 mt-0.5"/>
+              <span>{error}</span>
+            </div>
+          )}
+
+          {success ? (
+            <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-3 text-sm text-green-700 flex items-center gap-2 font-semibold">
+              <CheckCircle size={16}/> Interview scheduled successfully!
+            </div>
+          ) : (
+            <div className="flex gap-3 pt-1">
+              <button type="button" onClick={onClose}
+                className="flex-1 border border-gray-200 text-gray-600 py-2.5 rounded-xl text-sm font-medium hover:bg-gray-50 transition">
+                Cancel
+              </button>
+              <button type="submit" disabled={saving}
+                className="flex-1 bg-red-700 hover:bg-red-800 text-white py-2.5 rounded-xl text-sm font-semibold transition disabled:opacity-60 flex items-center justify-center gap-2">
+                {saving ? <><Loader2 size={14} className="animate-spin"/> Saving…</> : <><Calendar size={14}/> Schedule & Notify</>}
+              </button>
+            </div>
+          )}
         </form>
       </div>
     </div>
