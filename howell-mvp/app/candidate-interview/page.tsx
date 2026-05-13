@@ -183,6 +183,7 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
   const [browserMsg,     setBrowserMsg]    = useState('')
   const [errorMsg,       setErrorMsg]      = useState('')
   const [micEnabled,     setMicEnabled]    = useState(true)
+  const [webcamActive,   setWebcamActive]  = useState(false)
 
   const recognitionRef    = useRef<SpeechRecognition | null>(null)
   const webcamVideoRef    = useRef<HTMLVideoElement>(null)
@@ -238,15 +239,25 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
       // Webcam + Microphone (audio needed for recording)
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-        if (webcamVideoRef.current) { webcamVideoRef.current.srcObject = stream; webcamVideoRef.current.muted = true }
+        if (webcamVideoRef.current) {
+          webcamVideoRef.current.srcObject = stream
+          webcamVideoRef.current.muted = true
+          webcamVideoRef.current.onloadedmetadata = () => setWebcamActive(true)
+        }
         mediaStreamRef.current = stream
+        setWebcamActive(true)
       } catch {
         // Try video-only if mic permission denied
         try {
           const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
-          if (webcamVideoRef.current) { webcamVideoRef.current.srcObject = stream; webcamVideoRef.current.muted = true }
+          if (webcamVideoRef.current) {
+            webcamVideoRef.current.srcObject = stream
+            webcamVideoRef.current.muted = true
+            webcamVideoRef.current.onloadedmetadata = () => setWebcamActive(true)
+          }
           mediaStreamRef.current = stream
-        } catch { /* camera optional */ }
+          setWebcamActive(true)
+        } catch { /* camera optional — recording won't be available */ }
       }
 
       speechSynthesis.getVoices()
@@ -593,13 +604,23 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
 
           {/* Candidate webcam */}
           <div className="h-72 md:h-96 bg-gray-900 rounded-2xl overflow-hidden relative flex items-center justify-center">
-            <video ref={webcamVideoRef} autoPlay muted playsInline className="w-full h-full object-cover"/>
-            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-              <User size={40} className="text-gray-600 mb-2"/>
-              <p className="text-gray-500 text-sm">{candidateName || 'You'}</p>
-            </div>
+            <video ref={webcamVideoRef} autoPlay muted playsInline
+              className={`w-full h-full object-cover transition-opacity duration-500 ${webcamActive ? 'opacity-100' : 'opacity-0'}`}/>
+            {!webcamActive && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                <User size={40} className="text-gray-600 mb-2"/>
+                <p className="text-gray-500 text-sm">{candidateName || 'You'}</p>
+                <p className="text-xs text-gray-600 mt-1">Camera loading…</p>
+              </div>
+            )}
+            {webcamActive && (
+              <div className="absolute bottom-3 left-3 bg-black/50 text-white text-xs px-2 py-1 rounded-full pointer-events-none">
+                {candidateName || 'You'}
+              </div>
+            )}
             <div className="absolute top-3 left-3 flex items-center gap-1.5 bg-black/50 text-white text-xs px-2 py-1 rounded-full">
-              <Circle size={6} className="fill-red-500 text-red-500"/> REC
+              <Circle size={6} className={webcamActive ? "fill-red-500 text-red-500 animate-pulse" : "fill-gray-500 text-gray-500"}/>
+              {webcamActive ? 'REC' : 'NO CAM'}
             </div>
           </div>
         </div>
