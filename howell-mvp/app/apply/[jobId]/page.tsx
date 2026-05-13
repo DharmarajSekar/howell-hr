@@ -370,7 +370,7 @@ export default function ApplyPage() {
     })
     const score = await scoreRes.json()
 
-    const appRes = await fetch('/api/applications', {
+    await fetch('/api/applications', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -383,26 +383,6 @@ export default function ApplyPage() {
         ai_gaps:          score.gaps,
       }),
     })
-    const application = await appRes.json()
-
-    // Auto-create pre-screen session and redirect candidate to answer questions
-    try {
-      const psRes = await fetch('/api/pre-screen', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          application_id: application.id,
-          candidate_name: form.full_name,
-          job_title:      job?.title || '',
-        }),
-      })
-      const ps = await psRes.json()
-      if (ps.id) {
-        // Redirect candidate to text pre-screen — no "submitted" screen shown
-        window.location.href = `/text-prescreen/${ps.id}`
-        return
-      }
-    } catch { /* fall through to submitted screen if pre-screen creation fails */ }
 
     setSubmitted(true)
     setSubmitting(false)
@@ -536,7 +516,7 @@ export default function ApplyPage() {
               disabled={submitting || parsing}
               className="w-full bg-red-700 hover:bg-red-800 text-white py-3 rounded-xl font-semibold text-sm transition disabled:opacity-60 flex items-center justify-center gap-2"
             >
-              {submitting ? <><Loader2 size={16} className="animate-spin" /> Submitting… Starting Pre-Screen</> : 'Submit Application & Start Pre-Screen →'}
+              {submitting ? <><Loader2 size={16} className="animate-spin" /> Submitting & Scoring…</> : 'Submit Application'}
             </button>
           </form>
         </div>

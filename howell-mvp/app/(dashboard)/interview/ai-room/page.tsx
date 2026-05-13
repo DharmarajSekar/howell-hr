@@ -1,1128 +1,1111 @@
 'use client'
-export const dynamic = 'force-dynamic'
 /**
- * AI Interview Room — HR View
- * /interview/ai-room?applicationId=X&roundId=Y
+ * AI Interview Room — 100% Free Stack
  *
- * Avatar:  Simli real-time lip-sync avatar (if SIMLI_API_KEY + ELEVENLABS_API_KEY set)
- *          Falls back to animated SVG avatar + browser TTS automatically.
- * STT:     window.SpeechRecognition (Chrome/Edge)
- * TTS:     ElevenLabs PCM16 → Simli  OR  browser speechSynthesis (fallback)
- * AI:      Gemini via /api/interviews/ai-interview
+ * Avatar  : Animated CSS/SVG face (zero cost, zero API)
+ * STT     : window.SpeechRecognition (browser built-in, Chrome/Edge)
+ * TTS     : window.speechSynthesis   (browser built-in, all browsers)
+ * AI      : Claude Haiku via /api/interviews/ai-interview
+ *
+ * Custom mode : ?applicationId=X&roundId=Y&mode=custom
+ * Legacy mode : ?sessionId=X  (existing Tavus sessions, unchanged)
  */
 
-import { useEffect, useState, useRef, Suspense } from 'react'
-import { useSearchParams } from 'next/navigation'
-import Link from 'next/link'
 import {
-  Mic, MicOff, CheckCircle, AlertCircle, Bot, User,
-  Circle, Square, Wifi, WifiOff, ArrowLeft, Copy,
-  Send, ExternalLink, Clock, Zap, Trophy
+  useEffect, useState, useRef, useCallback, Suspense
+} from 'react'
+import { useSearchParams } from 'next/navigation'
+import {
+  Mic, MicOff, CheckCircle, AlertCircle, ArrowLeft,
+  Bot, User, ChevronDown, ChevronUp, ThumbsUp,
+  ThumbsDown, Minus, Video, RefreshCw, ExternalLink,
+  Circle
 } from 'lucide-react'
+import Link from 'next/link'
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   SVG Fallback Avatar
+   Animated Avatar Component
 ───────────────────────────────────────────────────────────────────────────── */
 type AvatarState = 'idle' | 'speaking' | 'listening' | 'thinking'
 
-function FallbackAvatar({ state }: { state: AvatarState }) {
-  const [mouthOpen,  setMouthOpen]  = useState(false)
-  const [eyesClosed, setEyesClosed] = useState(false)
-  const [pupilX,     setPupilX]     = useState(0)
-  const blinkRef = useRef<ReturnType<typeof setTimeout>>()
+function AnimatedAvatar({ state, name = 'Alex' }: { state: AvatarState; name?: string }) {
+  const [mouthOpen,   setMouthOpen]   = useState(false)
+  const [eyesClosed,  setEyesClosed]  = useState(false)
+  const [pupilOffset, setPupilOffset] = useState({ x: 0, y: 0 })
+  const blinkTimerRef = useRef<ReturnType<typeof setTimeout>>()
 
+  /* Mouth toggle while speaking */
   useEffect(() => {
     if (state !== 'speaking') { setMouthOpen(false); return }
-    const iv = setInterval(() => setMouthOpen(p => !p), 200)
+    const iv = setInterval(() => setMouthOpen(p => !p), 190)
     return () => clearInterval(iv)
   }, [state])
 
+  /* Natural eye blink */
   useEffect(() => {
-    function blink() {
-      blinkRef.current = setTimeout(() => {
+    function scheduleBlink() {
+      blinkTimerRef.current = setTimeout(() => {
         setEyesClosed(true)
-        setTimeout(() => { setEyesClosed(false); blink() }, 130)
-      }, 2500 + Math.random() * 4000)
+        setTimeout(() => { setEyesClosed(false); scheduleBlink() }, 140)
+      }, 2200 + Math.random() * 3500)
     }
-    blink()
-    return () => clearTimeout(blinkRef.current)
+    scheduleBlink()
+    return () => clearTimeout(blinkTimerRef.current)
   }, [])
 
+  /* Subtle pupil drift */
   useEffect(() => {
-    const iv = setInterval(() => setPupilX((Math.random() - 0.5) * 4), 3000)
+    const iv = setInterval(() => {
+      setPupilOffset({
+        x: (Math.random() - 0.5) * 4,
+        y: (Math.random() - 0.5) * 3,
+      })
+    }, 2500)
     return () => clearInterval(iv)
   }, [])
 
-  const bg = {
-    idle:      'linear-gradient(160deg, #0f0c29 0%, #302b63 100%)',
-    speaking:  'linear-gradient(160deg, #1a0533 0%, #3d1a6e 100%)',
-    listening: 'linear-gradient(160deg, #0a1628 0%, #1e3a5f 100%)',
-    thinking:  'linear-gradient(160deg, #0d1117 0%, #21262d 100%)',
-  }[state]
+  const isListening = state === 'listening'
+  const isSpeaking  = state === 'speaking'
+  const isThinking  = state === 'thinking'
 
   return (
-    <div className="relative w-full h-full flex items-center justify-center overflow-hidden" style={{ background: bg }}>
-      <div className="absolute inset-0">
-        <div className="absolute rounded-full opacity-20" style={{
-          width: 400, height: 400, top: '10%', left: '50%', transform: 'translateX(-50%)',
-          background: state === 'speaking' ? 'radial-gradient(circle, #7c3aed, transparent)' : 'radial-gradient(circle, #4f46e5, transparent)',
-          filter: 'blur(60px)', transition: 'background 0.8s'
-        }}/>
-      </div>
-      {state === 'speaking' && (
-        <div className="absolute bottom-16 left-1/2 -translate-x-1/2 flex items-end gap-1.5 z-10">
-          {[6,12,18,24,30,24,18,12,6].map((h,i) => (
-            <div key={i} className="w-1.5 rounded-full bg-violet-400/60 animate-pulse"
-              style={{ height: h, animationDelay: `${i*0.08}s`, animationDuration: '0.6s' }}/>
+    <div className="relative w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-violet-900 via-indigo-900 to-slate-900 overflow-hidden">
+
+      {/* Ambient glow */}
+      <div className={`absolute w-72 h-72 rounded-full blur-3xl opacity-20 transition-colors duration-700 ${
+        isListening ? 'bg-blue-400' : isSpeaking ? 'bg-violet-400' : isThinking ? 'bg-amber-300' : 'bg-indigo-400'
+      }`} />
+
+      {/* Listening pulse rings */}
+      {isListening && (
+        <>
+          <div className="absolute w-52 h-52 rounded-full border border-blue-400/40 animate-ping" style={{ animationDuration: '1.8s' }} />
+          <div className="absolute w-64 h-64 rounded-full border border-blue-300/20 animate-ping" style={{ animationDuration: '2.4s', animationDelay: '0.4s' }} />
+        </>
+      )}
+
+      {/* Speaking waveform bars */}
+      {isSpeaking && (
+        <div className="absolute bottom-20 left-1/2 -translate-x-1/2 flex items-end gap-1">
+          {[0.6, 1, 0.8, 1.2, 0.7, 1, 0.9, 0.6].map((h, i) => (
+            <div
+              key={i}
+              className="w-1.5 bg-violet-400/60 rounded-full"
+              style={{
+                height: `${h * 18}px`,
+                animation: `waveBar 0.6s ease-in-out infinite alternate`,
+                animationDelay: `${i * 0.08}s`,
+              }}
+            />
           ))}
         </div>
       )}
-      <svg viewBox="0 0 320 460" className="relative z-10 w-full h-full" style={{ maxHeight: '90%', maxWidth: '70%' }}>
-        <defs>
-          <radialGradient id="sg" cx="50%" cy="40%" r="60%">
-            <stop offset="0%" stopColor="#F5C5A3"/><stop offset="100%" stopColor="#E8A87C"/>
-          </radialGradient>
-          <linearGradient id="hg" x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%" stopColor="#3D2008"/><stop offset="100%" stopColor="#1C0D03"/>
-          </linearGradient>
-          <linearGradient id="bg2" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="#1e2d4a"/><stop offset="100%" stopColor="#111827"/>
-          </linearGradient>
-        </defs>
-        <path d="M60 320 Q90 300 160 295 Q230 300 260 320 L280 460 H40 Z" fill="url(#bg2)"/>
-        <path d="M130 295 L105 330 L100 380 L120 340 L145 310 Z" fill="#162236"/>
-        <path d="M190 295 L215 330 L220 380 L200 340 L175 310 Z" fill="#162236"/>
-        <path d="M145 295 L130 310 L160 330 L190 310 L175 295 L160 305 Z" fill="#e8e8e8"/>
-        <rect x="138" y="248" width="44" height="55" rx="8" fill="url(#sg)"/>
-        <ellipse cx="160" cy="268" rx="18" ry="6" fill="#D4956A" opacity="0.3"/>
-        <path d="M68 140 Q48 180 44 240 Q42 290 55 330 Q60 345 68 330 Q58 290 60 240 Q62 190 78 150 Z" fill="url(#hg)"/>
-        <path d="M252 140 Q272 180 276 240 Q278 290 265 330 Q260 345 252 330 Q262 290 260 240 Q258 190 242 150 Z" fill="url(#hg)"/>
-        <ellipse cx="160" cy="178" rx="82" ry="92" fill="url(#sg)"/>
-        <ellipse cx="160" cy="100" rx="85" ry="52" fill="url(#hg)"/>
-        <rect x="75" y="100" width="170" height="45" fill="url(#hg)"/>
-        <path d="M78 125 Q62 150 66 195 Q68 210 75 210 Q72 190 76 160 Q80 140 88 130 Z" fill="url(#hg)"/>
-        <path d="M242 125 Q258 150 254 195 Q252 210 245 210 Q248 190 244 160 Q240 140 232 130 Z" fill="url(#hg)"/>
-        <ellipse cx="79" cy="183" rx="13" ry="17" fill="#E8A87C"/>
-        <ellipse cx="79" cy="183" rx="7" ry="10" fill="#D4956A"/>
-        <ellipse cx="241" cy="183" rx="13" ry="17" fill="#E8A87C"/>
-        <ellipse cx="241" cy="183" rx="7" ry="10" fill="#D4956A"/>
-        <circle cx="79" cy="197" r="4" fill="#d4a843" stroke="#b8922e" strokeWidth="1"/>
-        <circle cx="241" cy="197" r="4" fill="#d4a843" stroke="#b8922e" strokeWidth="1"/>
-        <path d={state==='thinking' ? 'M112 138 Q130 130 150 136' : 'M112 140 Q130 132 150 138'} stroke="#2C1A0E" strokeWidth="4.5" fill="none" strokeLinecap="round"/>
-        <path d={state==='thinking' ? 'M170 136 Q190 130 208 138' : 'M170 138 Q190 132 208 140'} stroke="#2C1A0E" strokeWidth="4.5" fill="none" strokeLinecap="round"/>
-        <ellipse cx="131" cy="168" rx="20" ry={eyesClosed ? 2.5 : 15} fill="white"/>
-        {!eyesClosed && <>
-          <circle cx={131+pupilX} cy="169" r="11" fill="#5C3010"/>
-          <circle cx={131+pupilX} cy="169" r="7" fill="#1A0800"/>
-          <circle cx={134+pupilX} cy="165" r="3.5" fill="white"/>
-        </>}
-        <path d="M111 160 Q131 152 151 160" stroke="#1C0D03" strokeWidth="3" fill="none" strokeLinecap="round"/>
-        <ellipse cx="189" cy="168" rx="20" ry={eyesClosed ? 2.5 : 15} fill="white"/>
-        {!eyesClosed && <>
-          <circle cx={189+pupilX} cy="169" r="11" fill="#5C3010"/>
-          <circle cx={189+pupilX} cy="169" r="7" fill="#1A0800"/>
-          <circle cx={192+pupilX} cy="165" r="3.5" fill="white"/>
-        </>}
-        <path d="M169 160 Q189 152 209 160" stroke="#1C0D03" strokeWidth="3" fill="none" strokeLinecap="round"/>
-        <path d="M155 190 Q148 212 152 218 Q160 222 168 218 Q172 212 165 190" stroke="#D4956A" strokeWidth="2" fill="none" strokeLinecap="round"/>
-        {mouthOpen ? (
-          <>
-            <path d="M133 238 Q160 232 187 238 Q175 258 160 262 Q145 258 133 238 Z" fill="#8B2635"/>
-            <path d="M133 238 Q147 230 160 234 Q173 230 187 238" fill="#C0534A" stroke="#A03A35" strokeWidth="1"/>
-            <path d="M140 240 Q160 237 180 240 Q175 248 160 249 Q145 248 140 240 Z" fill="white" opacity="0.85"/>
-          </>
-        ) : (
-          <>
-            <path d="M133 238 Q147 230 160 234 Q173 230 187 238" fill="#C0534A" stroke="#A03A35" strokeWidth="1"/>
-            <path d="M133 238 Q160 253 187 238" fill="#D4635A" stroke="#A03A35" strokeWidth="0.5"/>
-          </>
-        )}
-        <ellipse cx="107" cy="205" rx="16" ry="10" fill="#E87878" opacity="0.18"/>
-        <ellipse cx="213" cy="205" rx="16" ry="10" fill="#E87878" opacity="0.18"/>
-      </svg>
-      <div className="absolute bottom-6 left-0 right-0 text-center z-10">
-        <p className="text-white font-bold text-lg drop-shadow-lg">Alex</p>
-        <p className="text-violet-300 text-xs mt-0.5 drop-shadow">
-          {state==='speaking' ? '🔊 Speaking…' : state==='listening' ? '🎙 Listening…' : state==='thinking' ? '💭 Thinking…' : '⏳ Waiting'}
-        </p>
+
+      {/* Avatar face */}
+      <div className="relative z-10 flex flex-col items-center">
+        <svg width="150" height="175" viewBox="0 0 150 175" fill="none" xmlns="http://www.w3.org/2000/svg">
+          {/* Hair */}
+          <ellipse cx="75" cy="52" rx="52" ry="30" fill="#1a1a2e" />
+          <ellipse cx="75" cy="48" rx="46" ry="26" fill="#2d2250" />
+
+          {/* Face */}
+          <ellipse cx="75" cy="90" rx="48" ry="52" fill="#FDBCB4" />
+          <ellipse cx="75" cy="88" rx="46" ry="50" fill="#F5A89D" />
+
+          {/* Hair front */}
+          <path d="M 28 68 Q 30 48 75 44 Q 120 48 122 68" fill="#2d2250" />
+          <ellipse cx="30" cy="78" rx="8" ry="20" fill="#2d2250" />
+          <ellipse cx="120" cy="78" rx="8" ry="20" fill="#2d2250" />
+
+          {/* Eyebrows */}
+          <path d="M 48 72 Q 58 68 66 72" stroke="#5c3d1e" strokeWidth="2.5" strokeLinecap="round" fill="none" />
+          <path d="M 84 72 Q 92 68 102 72" stroke="#5c3d1e" strokeWidth="2.5" strokeLinecap="round" fill="none" />
+
+          {/* Eyes — white */}
+          <ellipse cx="57" cy="82" rx="11" ry={eyesClosed ? 1.5 : 8} fill="white" style={{ transition: 'ry 0.08s' }} />
+          <ellipse cx="93" cy="82" rx="11" ry={eyesClosed ? 1.5 : 8} fill="white" style={{ transition: 'ry 0.08s' }} />
+
+          {/* Pupils */}
+          {!eyesClosed && (
+            <>
+              <circle cx={57 + pupilOffset.x} cy={82 + pupilOffset.y} r="5.5" fill="#3b2314" style={{ transition: 'cx 0.6s, cy 0.6s' }} />
+              <circle cx={93 + pupilOffset.x} cy={82 + pupilOffset.y} r="5.5" fill="#3b2314" style={{ transition: 'cx 0.6s, cy 0.6s' }} />
+              {/* Eye shine */}
+              <circle cx={59 + pupilOffset.x} cy={80 + pupilOffset.y} r="1.8" fill="white" />
+              <circle cx={95 + pupilOffset.x} cy={80 + pupilOffset.y} r="1.8" fill="white" />
+            </>
+          )}
+
+          {/* Nose */}
+          <path d="M 73 95 Q 70 105 68 108 Q 75 112 82 108 Q 80 105 77 95" fill="#E8917F" opacity="0.6" />
+
+          {/* Mouth */}
+          {mouthOpen ? (
+            <>
+              {/* Open mouth */}
+              <path d="M 58 122 Q 75 134 92 122" fill="#7c3838" />
+              <path d="M 58 122 Q 75 130 92 122 Q 75 127 58 122" fill="#c45c5c" />
+              {/* Teeth */}
+              <path d="M 62 122 Q 75 126 88 122" fill="white" />
+            </>
+          ) : (
+            /* Closed smile */
+            <path d="M 58 120 Q 75 132 92 120" stroke="#c45c5c" strokeWidth="3" strokeLinecap="round" fill="none" />
+          )}
+
+          {/* Cheeks */}
+          <ellipse cx="44" cy="104" rx="9" ry="6" fill="#f0a0a0" opacity="0.35" />
+          <ellipse cx="106" cy="104" rx="9" ry="6" fill="#f0a0a0" opacity="0.35" />
+
+          {/* Neck */}
+          <rect x="65" y="138" width="20" height="18" fill="#F5A89D" />
+
+          {/* Collar / shirt */}
+          <path d="M 30 170 Q 45 148 75 155 Q 105 148 120 170 L 150 175 L 0 175 Z" fill="#4c1d95" />
+          <path d="M 65 155 L 75 165 L 85 155" fill="#6d28d9" />
+
+          {/* Shirt lapels */}
+          <path d="M 65 155 Q 50 158 30 170" stroke="#6d28d9" strokeWidth="1.5" fill="none" />
+          <path d="M 85 155 Q 100 158 120 170" stroke="#6d28d9" strokeWidth="1.5" fill="none" />
+        </svg>
+
+        {/* Name / status label */}
+        <div className="mt-3 flex flex-col items-center gap-1">
+          <span className="text-sm font-semibold text-white">{name}</span>
+          <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-medium ${
+            isListening ? 'bg-blue-500/30 text-blue-200'
+            : isSpeaking ? 'bg-violet-500/30 text-violet-200'
+            : isThinking ? 'bg-amber-500/30 text-amber-200'
+            : 'bg-white/10 text-gray-300'
+          }`}>
+            {isListening ? '● Listening' : isSpeaking ? '▶ Speaking' : isThinking ? '⟳ Thinking' : 'AI Interviewer'}
+          </span>
+        </div>
       </div>
+
+      {/* Keyframes injected via style tag */}
+      <style>{`
+        @keyframes waveBar {
+          from { transform: scaleY(0.4); }
+          to   { transform: scaleY(1.2); }
+        }
+      `}</style>
     </div>
   )
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   Browser helpers
+   Browser capability check
 ───────────────────────────────────────────────────────────────────────────── */
 function checkBrowserSupport() {
   if (typeof window === 'undefined') return { supported: false, reason: '' }
   const hasSR = !!(window.SpeechRecognition || (window as any).webkitSpeechRecognition)
   const hasSS = 'speechSynthesis' in window
-  if (!hasSR) return { supported: false, reason: 'Please use Google Chrome or Microsoft Edge.' }
-  if (!hasSS) return { supported: false, reason: 'Speech Synthesis not supported. Use Chrome or Edge.' }
+  if (!hasSR) return { supported: false, reason: 'Your browser does not support the Speech Recognition API. Please use Google Chrome or Microsoft Edge.' }
+  if (!hasSS) return { supported: false, reason: 'Your browser does not support Speech Synthesis. Please use a modern browser.' }
   return { supported: true, reason: '' }
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   TTS helper (speechSynthesis)
+───────────────────────────────────────────────────────────────────────────── */
 function getBestVoice(): SpeechSynthesisVoice | null {
   const voices = speechSynthesis.getVoices()
   return (
     voices.find(v => v.name.includes('Google UK English Female')) ||
     voices.find(v => v.name.includes('Microsoft Zira'))           ||
     voices.find(v => v.name.includes('Google US English'))        ||
+    voices.find(v => v.lang === 'en-GB' && !v.localService)       ||
+    voices.find(v => v.lang === 'en-US' && !v.localService)       ||
     voices.find(v => v.lang.startsWith('en'))                     ||
-    voices[0] || null
+    voices[0]                                                      ||
+    null
   )
 }
 
-async function speakBrowser(text: string, onStart?: () => void, onEnd?: () => void) {
-  return new Promise<void>(resolve => {
+async function speak(text: string, onStart?: () => void, onEnd?: () => void): Promise<void> {
+  return new Promise(resolve => {
     speechSynthesis.cancel()
-    const utt = new SpeechSynthesisUtterance(text)
+    const utt   = new SpeechSynthesisUtterance(text)
     const voice = getBestVoice()
     if (voice) utt.voice = voice
-    utt.rate = 0.92; utt.pitch = 1.1; utt.volume = 1.0
-    utt.onstart = () => onStart?.()
-    utt.onend   = () => { onEnd?.(); resolve() }
-    utt.onerror = () => { onEnd?.(); resolve() }
+    utt.rate  = 0.92
+    utt.pitch = 1.05
+    utt.volume = 1.0
+    utt.onstart  = () => onStart?.()
+    utt.onend    = () => { onEnd?.(); resolve() }
+    utt.onerror  = () => { onEnd?.(); resolve() }
     speechSynthesis.speak(utt)
   })
 }
 
-type Phase = 'loading' | 'invalid' | 'ready' | 'opening' | 'listening' | 'processing' | 'speaking' | 'completed' | 'error'
+/* ─────────────────────────────────────────────────────────────────────────────
+   Phase & transcript types
+───────────────────────────────────────────────────────────────────────────── */
+type Phase = 'setup' | 'ready' | 'opening' | 'listening' | 'processing' | 'speaking' | 'completed' | 'error'
 
 interface TranscriptEntry {
-  role: 'interviewer' | 'candidate'
-  text: string
+  role:      'interviewer' | 'candidate'
+  text:      string
   timestamp: string
+  score?:    number
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   Main Interview Room (HR view — same Simli experience as candidate)
+   Custom Bot Interview Room
 ───────────────────────────────────────────────────────────────────────────── */
-function AIRoomInterviewInner({ applicationId, roundId }: { applicationId: string; roundId?: string | null }) {
-  const TIME_PER_QUESTION = 120
+function CustomBotRoom({ applicationId, roundId }: { applicationId: string; roundId: string | null }) {
 
-  const [phase,          setPhase]         = useState<Phase>('loading')
-  const [candidateName,  setCandidateName] = useState('')
-  const [jobTitle,       setJobTitle]      = useState('')
-  const [questionIndex,  setQuestionIndex] = useState(0)
-  const [scores,         setScores]        = useState<number[]>([])
-  const [transcript,     setTranscript]    = useState<TranscriptEntry[]>([])
-  const [liveText,       setLiveText]      = useState('')
-  const [currentAnswer,  setCurrentAnswer] = useState('')
-  const [avatarState,    setAvatarState]   = useState<AvatarState>('idle')
-  const [timeLeft,       setTimeLeft]      = useState(TIME_PER_QUESTION)
-  const [browserOk,      setBrowserOk]     = useState(true)
-  const [browserMsg,     setBrowserMsg]    = useState('')
-  const [errorMsg,       setErrorMsg]      = useState('')
-  const [micEnabled,     setMicEnabled]    = useState(true)
-  const [webcamActive,   setWebcamActive]  = useState(false)
-  const [isRecording,    setIsRecording]   = useState(false)
-  const [elapsedTime,    setElapsedTime]   = useState(0)
-  const [pendingStream,  setPendingStream] = useState<MediaStream | null>(null)
-  // Simli state
-  const [simliEnabled,   setSimliEnabled]  = useState(false)
-  const [simliConnected, setSimliConnected]= useState(false)
-  const [simliLoading,   setSimliLoading]  = useState(false)
+  /* ── Per-question time limit (seconds) ── */
+  const TIME_PER_QUESTION = 120  // 2 minutes per question
 
-  const recognitionRef   = useRef<SpeechRecognition | null>(null)
-  const webcamVideoRef   = useRef<HTMLVideoElement>(null)
-  const simliVideoRef    = useRef<HTMLVideoElement>(null)
-  const simliAudioRef    = useRef<HTMLAudioElement>(null)
-  const simliClientRef   = useRef<any>(null)
-  const simliConfigRef   = useRef<{ apiKey: string; faceId: string } | null>(null)
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
-  const recordingChunks  = useRef<BlobPart[]>([])
-  const mediaStreamRef   = useRef<MediaStream | null>(null)
-  const questionTimerRef = useRef<ReturnType<typeof setInterval>>()
-  const elapsedTimerRef  = useRef<ReturnType<typeof setInterval>>()
-  const transcriptEndRef = useRef<HTMLDivElement>(null)
-  const answerBufferRef  = useRef('')
-  const questionIndexRef = useRef(0)
-  const scoresRef        = useRef<number[]>([])
-  const transcriptRef    = useRef<TranscriptEntry[]>([])
-  const isSpeakingRef    = useRef(false)
-  const isListeningRef   = useRef(false)
-  const shouldListenRef  = useRef(false)
-  const phaseRef         = useRef<Phase>('loading')
-  const sessionDbIdRef   = useRef<string | null>(null)
-  const questionsRef     = useRef<string[]>([])
+  /* ── State ── */
+  const [phase,          setPhase]          = useState<Phase>('setup')
+  const [log,            setLog]            = useState<string[]>([])
+  const [questions,      setQuestions]      = useState<string[]>([])
+  const [candidateName,  setCandidateName]  = useState('')
+  const [jobTitle,       setJobTitle]       = useState('')
+  const [sessionDbId,    setSessionDbId]    = useState<string | null>(null)
+  const [questionIndex,  setQuestionIndex]  = useState(0)
+  const [scores,         setScores]         = useState<number[]>([])
+  const [avgScore,       setAvgScore]       = useState<number | null>(null)
+  const [lastSignal,     setLastSignal]     = useState<string | null>(null)
+  const [transcript,     setTranscript]     = useState<TranscriptEntry[]>([])
+  const [liveText,       setLiveText]       = useState('')
+  const [currentAnswer,  setCurrentAnswer]  = useState('')
+  const [showTranscript, setShowTranscript] = useState(false)
+  const [evaluation,     setEvaluation]     = useState<any>(null)
+  const [micEnabled,     setMicEnabled]     = useState(true)
+  const [browserOk,      setBrowserOk]      = useState(true)
+  const [browserMsg,     setBrowserMsg]     = useState('')
+  const [avatarState,    setAvatarState]    = useState<AvatarState>('idle')
+  const [timeLeft,       setTimeLeft]       = useState<number>(TIME_PER_QUESTION)
 
-  function setPhaseSync(p: Phase) { phaseRef.current = p; setPhase(p) }
+  /* ── Refs ── */
+  const webcamVideoRef      = useRef<HTMLVideoElement>(null)
+  const recognitionRef      = useRef<SpeechRecognition | null>(null)
+  const micStreamRef        = useRef<MediaStream | null>(null)
+  const silenceTimerRef     = useRef<ReturnType<typeof setTimeout>>()
+  const questionTimerRef    = useRef<ReturnType<typeof setInterval>>()
+  const answerBufferRef     = useRef('')
+  const questionIndexRef    = useRef(0)
+  const scoresRef           = useRef<number[]>([])
+  const transcriptRef       = useRef<TranscriptEntry[]>([])
+  const isSpeakingRef       = useRef(false)
+  const isListeningRef      = useRef(false)
+  const sessionDbIdRef      = useRef<string | null>(null)
+  const candidateNameRef    = useRef('')
+  const jobTitleRef         = useRef('')
+  const questionsRef        = useRef<string[]>([])
+  const phaseRef            = useRef<Phase>('setup')
+  const shouldListenRef     = useRef(false)
 
-  useEffect(() => {
-    transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [transcript, liveText])
+  const addLog = (msg: string) => setLog(p => [...p, msg])
 
-  /* Attach webcam stream once video element mounts */
-  useEffect(() => {
-    if (!pendingStream || !webcamVideoRef.current) return
-    const video = webcamVideoRef.current
-    video.setAttribute('muted', '')
-    video.muted = true
-    video.srcObject = pendingStream
-    mediaStreamRef.current = pendingStream
-    const tryPlay = async () => {
-      try { await video.play() } catch {}
-      setWebcamActive(true)
-    }
-    if (video.readyState >= 1) tryPlay()
-    else video.onloadedmetadata = tryPlay
-    setPendingStream(null)
-  }, [pendingStream])
+  function setPhaseSync(p: Phase) {
+    phaseRef.current = p
+    setPhase(p)
+  }
 
-  /* Fetch Simli config on mount */
-  useEffect(() => {
-    async function fetchSimliConfig() {
-      try {
-        const res = await fetch('/api/interviews/simli-session')
-        if (!res.ok) return
-        const { apiKey, faceId } = await res.json()
-        if (!apiKey) return
-        simliConfigRef.current = { apiKey, faceId }
-        setSimliEnabled(true)
-      } catch (e) {
-        console.warn('[Simli] config fetch failed — using fallback avatar', e)
-      }
-    }
-    fetchSimliConfig()
-  }, [])
-
-  /* Load questions + camera */
+  /* ── Load data + request webcam ── */
   useEffect(() => {
     const { supported, reason } = checkBrowserSupport()
     if (!supported) { setBrowserOk(false); setBrowserMsg(reason); setPhaseSync('error'); return }
 
     async function load() {
+      addLog('Loading interview data…')
+      const url  = `/api/interviews/ai-interview?applicationId=${applicationId}${roundId ? `&roundId=${roundId}` : ''}`
+      const res  = await fetch(url)
+      const data = await res.json()
+      if (data.error) { addLog(`✗ ${data.error}`); setPhaseSync('error'); return }
+
+      setCandidateName(data.candidateName)
+      setJobTitle(data.jobTitle)
+      setQuestions(data.questions)
+      setSessionDbId(data.sessionId)
+      candidateNameRef.current = data.candidateName
+      jobTitleRef.current      = data.jobTitle
+      questionsRef.current     = data.questions
+      sessionDbIdRef.current   = data.sessionId
+      addLog(`✓ ${data.questions.length} questions ready for ${data.candidateName}`)
+
+      // Webcam
+      addLog('Requesting camera access…')
       try {
-        const qRes  = await fetch(`/api/interviews/ai-interview?applicationId=${applicationId}${roundId ? `&roundId=${roundId}` : ''}`)
-        const qData = await qRes.json()
-        if (qData.error) { setErrorMsg(qData.error); setPhaseSync('error'); return }
-
-        questionsRef.current = qData.questions || []
-        if (qData.sessionId) sessionDbIdRef.current = qData.sessionId
-        if (qData.candidateName) setCandidateName(qData.candidateName)
-        if (qData.jobTitle)      setJobTitle(qData.jobTitle)
-
-        setPhaseSync('ready')
-        speechSynthesis.getVoices()
-        speechSynthesis.onvoiceschanged = () => speechSynthesis.getVoices()
-
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-          setPendingStream(stream)
-        } catch {
-          try {
-            const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
-            setPendingStream(stream)
-          } catch {}
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+        micStreamRef.current = stream
+        if (webcamVideoRef.current) {
+          webcamVideoRef.current.srcObject = stream
+          webcamVideoRef.current.muted     = true
         }
-      } catch (e: any) {
-        setErrorMsg(e.message || 'Failed to load interview')
-        setPhaseSync('error')
+        addLog('✓ Camera ready')
+      } catch {
+        addLog('⚠ Camera not available — audio only')
       }
+
+      // Pre-load TTS voices
+      speechSynthesis.getVoices()
+      speechSynthesis.onvoiceschanged = () => speechSynthesis.getVoices()
+      addLog('✓ Ready to start')
+      setPhaseSync('ready')
     }
     load()
   }, [applicationId, roundId])
 
-  /* Speech recognition */
+  /* ── Build SpeechRecognition ── */
   function buildRecognition(): SpeechRecognition {
     const SR = (window.SpeechRecognition || (window as any).webkitSpeechRecognition) as typeof SpeechRecognition
-    const r = new SR()
-    r.continuous = true; r.interimResults = true; r.lang = 'en-IN'; r.maxAlternatives = 3
+    const r  = new SR()
+    r.continuous      = true
+    r.interimResults  = true
+    r.lang            = 'en-US'
+    r.maxAlternatives = 1
+
     r.onresult = (event: SpeechRecognitionEvent) => {
-      let interim = '', final = ''
+      let interim = ''
+      let final   = ''
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        let best = event.results[i][0]
-        for (let j = 1; j < event.results[i].length; j++) {
-          if (event.results[i][j].confidence > best.confidence) best = event.results[i][j]
-        }
-        if (event.results[i].isFinal) final += best.transcript + ' '
-        else interim += best.transcript
+        const t = event.results[i][0].transcript
+        if (event.results[i].isFinal) final += t + ' '
+        else interim += t
       }
       if (interim) setLiveText(interim)
-      if (final.trim()) { setLiveText(''); handleSpeech(final.trim()) }
-    }
-    r.onend = () => {
-      isListeningRef.current = false
-      if (shouldListenRef.current && !isSpeakingRef.current) {
-        try { r.start(); isListeningRef.current = true } catch {}
+      if (final.trim()) {
+        setLiveText('')
+        handleCandidateSpeech(final.trim())
       }
     }
-    r.onerror = () => { isListeningRef.current = false }
+
+    r.onend = () => {
+      isListeningRef.current = false
+      // Auto-restart if we should still be listening
+      if (shouldListenRef.current && !isSpeakingRef.current) {
+        try { r.start(); isListeningRef.current = true } catch { /* ignore */ }
+      }
+    }
+
+    r.onerror = (e: SpeechRecognitionErrorEvent) => {
+      if (e.error === 'not-allowed') {
+        addLog('✗ Microphone permission denied')
+        setPhaseSync('error')
+      }
+      isListeningRef.current = false
+    }
+
     return r
   }
 
-  function handleSpeech(text: string) {
-    if (phaseRef.current !== 'listening') return
-    answerBufferRef.current += ' ' + text
-    setCurrentAnswer(answerBufferRef.current.trim())
-  }
-
+  /* ── Per-question countdown timer (only starts for NEW questions) ── */
   function startQuestionTimer() {
     clearInterval(questionTimerRef.current)
     setTimeLeft(TIME_PER_QUESTION)
     let remaining = TIME_PER_QUESTION
     questionTimerRef.current = setInterval(() => {
-      remaining--; setTimeLeft(remaining)
+      remaining -= 1
+      setTimeLeft(remaining)
       if (remaining <= 0) {
         clearInterval(questionTimerRef.current)
         if (phaseRef.current === 'listening') {
           const answer = answerBufferRef.current.trim()
-          answerBufferRef.current = ''; setCurrentAnswer('')
+          answerBufferRef.current = ''
+          setCurrentAnswer('')
+          clearTimeout(silenceTimerRef.current)
+          // Only submit if candidate said something; otherwise mark as no response
           submitAnswer(answer.split(' ').length >= 3 ? answer : '(No response — time expired)')
         }
       }
     }, 1000)
   }
 
-  function startElapsedTimer() {
-    clearInterval(elapsedTimerRef.current)
-    let secs = 0
-    elapsedTimerRef.current = setInterval(() => { secs++; setElapsedTime(secs) }, 1000)
+  function stopQuestionTimer() {
+    clearInterval(questionTimerRef.current)
   }
 
+  /* ── startListening: only starts speech recognition, does NOT reset question timer ── */
   function startListening() {
     if (isSpeakingRef.current) return
-    shouldListenRef.current = true; setAvatarState('listening')
+    shouldListenRef.current = true
+    setAvatarState('listening')
     if (!recognitionRef.current) recognitionRef.current = buildRecognition()
-    if (!isListeningRef.current) { try { recognitionRef.current.start(); isListeningRef.current = true } catch {} }
+    if (!isListeningRef.current) {
+      try { recognitionRef.current.start(); isListeningRef.current = true } catch { /* already started */ }
+    }
     setPhaseSync('listening')
+    // NOTE: does NOT call startQuestionTimer — that only runs when a new question starts
+  }
+
+  /* ── startNewQuestion: called when a fresh question begins (resets timer + starts listening) ── */
+  function startNewQuestion() {
+    answerBufferRef.current = ''
+    setCurrentAnswer('')
+    setLiveText('')
+    startListening()
+    startQuestionTimer()   // ← timer resets ONLY here
   }
 
   function stopListening() {
-    shouldListenRef.current = false; isListeningRef.current = false
-    try { recognitionRef.current?.stop() } catch {}
-    setLiveText(''); clearInterval(questionTimerRef.current)
+    shouldListenRef.current = false
+    isListeningRef.current  = false
+    try { recognitionRef.current?.stop() } catch { /* ignore */ }
+    setLiveText('')
+    stopQuestionTimer()
   }
 
-  function startNewQuestion() {
-    answerBufferRef.current = ''; setCurrentAnswer(''); setLiveText('')
-    startListening(); startQuestionTimer()
+  /* ── Manual submit by candidate (most reliable path) ── */
+  function handleManualSubmit() {
+    const answer = answerBufferRef.current.trim()
+    if (!answer || phaseRef.current !== 'listening') return
+    clearTimeout(silenceTimerRef.current)
+    answerBufferRef.current = ''
+    setCurrentAnswer('')
+    submitAnswer(answer)
   }
 
-  /* Simli TTS */
-  async function speakWithSimli(text: string): Promise<boolean> {
-    if (!simliClientRef.current || !simliClientRef.current.isConnected()) return false
-    try {
-      const res = await fetch('/api/interviews/tts-pcm', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
-      })
-      if (!res.ok) return false
-      const durationMs = parseInt(res.headers.get('X-Duration-Ms') || '0', 10) || 4000
-      const pcmData    = new Uint8Array(await res.arrayBuffer())
-      simliClientRef.current.sendAudioData(pcmData)
-      await new Promise<void>(resolve => setTimeout(resolve, durationMs + 800))
-      return true
-    } catch (err) {
-      console.warn('[Simli speak] Error, falling back to browser TTS:', err)
-      return false
-    }
+  /* ── Candidate speech → buffer with generous silence detection ── */
+  function handleCandidateSpeech(text: string) {
+    if (phaseRef.current !== 'listening') return
+    answerBufferRef.current += ' ' + text
+    setCurrentAnswer(answerBufferRef.current.trim())
+
+    // Reset silence timer on every new speech chunk
+    clearTimeout(silenceTimerRef.current)
+    silenceTimerRef.current = setTimeout(() => {
+      const answer = answerBufferRef.current.trim()
+      const wordCount = answer.split(/\s+/).filter(Boolean).length
+      // Only auto-submit on silence if candidate said at least 8 words
+      // This prevents premature submission during thinking pauses
+      if (wordCount >= 8) {
+        answerBufferRef.current = ''
+        setCurrentAnswer('')
+        submitAnswer(answer)
+      }
+      // If fewer words, just keep waiting — candidate is still formulating
+    }, 6000)  // 6 seconds of silence before auto-submit (was 2.8s)
   }
 
+  /* ── Avatar speaks ── */
   async function avatarSpeak(text: string) {
     isSpeakingRef.current = true
-    stopListening(); setAvatarState('speaking'); setMicEnabled(false)
+    stopListening()
+    setAvatarState('speaking')
+    setMicEnabled(false)
 
     const entry: TranscriptEntry = { role: 'interviewer', text, timestamp: new Date().toISOString() }
     transcriptRef.current = [...transcriptRef.current, entry]
     setTranscript([...transcriptRef.current])
 
-    const usedSimli = await speakWithSimli(text)
-    if (!usedSimli) {
-      await speakBrowser(text, () => { isSpeakingRef.current = true }, () => {})
-    }
+    await speak(
+      text,
+      () => { setAvatarState('speaking') },
+      () => { setAvatarState('idle') }
+    )
 
     isSpeakingRef.current = false
     setMicEnabled(true)
   }
 
+  /* ── Submit candidate answer to Claude ── */
   async function submitAnswer(answer: string) {
-    stopListening(); setPhaseSync('processing'); setAvatarState('thinking')
+    if (phaseRef.current !== 'listening') return
+    stopListening()
+    setPhaseSync('processing')
+    setAvatarState('thinking')
+
     const entry: TranscriptEntry = { role: 'candidate', text: answer, timestamp: new Date().toISOString() }
     transcriptRef.current = [...transcriptRef.current, entry]
     setTranscript([...transcriptRef.current])
 
-    const currentQ  = questionsRef.current[questionIndexRef.current]
-    const nextIndex = questionIndexRef.current + 1
     try {
-      const res  = await fetch('/api/interviews/ai-interview', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'score_answer', question: currentQ, answer, applicationId }),
+      const res = await fetch('/api/interviews/ai-interview', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          candidateName:   candidateNameRef.current,
+          jobTitle:        jobTitleRef.current,
+          questions:       questionsRef.current,
+          questionIndex:   questionIndexRef.current,
+          candidateAnswer: answer,
+          scores:          scoresRef.current,
+        }),
       })
       const data = await res.json()
-      scoresRef.current = [...scoresRef.current, data.score ?? 50]
-      setScores([...scoresRef.current])
-    } catch { scoresRef.current = [...scoresRef.current, 50]; setScores([...scoresRef.current]) }
+      if (data.error) { addLog(`Claude error: ${data.error}`); startListening(); return }
 
-    if (nextIndex < questionsRef.current.length) {
-      questionIndexRef.current = nextIndex; setQuestionIndex(nextIndex)
-      setPhaseSync('speaking')
-      await avatarSpeak(`Thank you. Next question: ${questionsRef.current[nextIndex]}`)
-      startNewQuestion()
-    } else {
-      await finishInterview()
-    }
-  }
-
-  async function finishInterview() {
-    clearInterval(elapsedTimerRef.current); stopListening()
-    setPhaseSync('speaking')
-    await avatarSpeak('That concludes the interview. Thank you for your responses. Our HR team will be in touch shortly. Best of luck!')
-    setAvatarState('idle'); setIsRecording(false)
-    try { simliClientRef.current?.close() } catch {}
-
-    if (sessionDbIdRef.current && scoresRef.current.length > 0) {
-      const avg = Math.round(scoresRef.current.reduce((a,b)=>a+b,0)/scoresRef.current.length)
-      try {
-        await fetch('/api/interviews/ai-interview', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'complete_session', sessionId: sessionDbIdRef.current,
-            transcript: transcriptRef.current, scores: scoresRef.current, avgScore: avg, applicationId }),
-        })
-      } catch {}
-    }
-    setPhaseSync('completed')
-  }
-
-  async function startInterview() {
-    setPhaseSync('opening'); questionIndexRef.current = 0; setQuestionIndex(0)
-    startRecording(); startElapsedTimer()
-
-    /* Start Simli — Initialize here so DOM elements are mounted */
-    if (simliEnabled && simliConfigRef.current && simliVideoRef.current && simliAudioRef.current) {
-      setSimliLoading(true)
-      try {
-        const { default: SimliClient } = await import('simli-client')
-        const client = new SimliClient()
-
-        client.on('connected',    () => { setSimliConnected(true);  setSimliLoading(false) })
-        client.on('disconnected', () => { setSimliConnected(false) })
-        client.on('failed',       (_reason: string) => { setSimliConnected(false); setSimliLoading(false) })
-
-        client.Initialize({
-          apiKey:               simliConfigRef.current.apiKey,
-          faceID:               simliConfigRef.current.faceId,
-          handleSilence:        true,
-          maxSessionLength:     3600,
-          maxIdleTime:          300,
-          session_token:        '',
-          videoRef:             simliVideoRef.current,
-          audioRef:             simliAudioRef.current,
-          SimliURL:             '',
-          maxRetryAttempts:     3,
-          retryDelay_ms:        2000,
-          videoReceivedTimeout: 15000,
-          enableSFU:            true,
-          model:                'fasttalk',
-        })
-
-        simliClientRef.current = client
-        await client.start()
-      } catch (e) {
-        console.warn('[Simli] WebRTC start failed — using fallback', e)
-        setSimliLoading(false)
+      // Update scores
+      if (data.score !== null && data.score !== undefined) {
+        const newScores = [...scoresRef.current, data.score]
+        scoresRef.current = newScores
+        setScores(newScores)
+        setAvgScore(data.avgScore)
+        setLastSignal(data.signal)
+        transcriptRef.current = transcriptRef.current.map((t, i) =>
+          i === transcriptRef.current.length - 1 ? { ...t, score: data.score } : t
+        )
+        setTranscript([...transcriptRef.current])
       }
-      await new Promise(r => setTimeout(r, 3000))
+
+      if (data.isComplete) {
+        await avatarSpeak(data.speech)
+        setPhaseSync('completed')
+        setAvatarState('idle')
+        await saveInterview()
+      } else {
+        questionIndexRef.current = data.nextQuestionIndex
+        setQuestionIndex(data.nextQuestionIndex)
+        await avatarSpeak(data.speech)
+        startNewQuestion()   // resets timer for the fresh question
+      }
+    } catch (err: any) {
+      addLog(`Error: ${err.message}`)
+      startListening()       // on error: just restart mic, don't reset timer
     }
-
-    await avatarSpeak(
-      `Hello ${candidateName ? candidateName.split(' ')[0] : 'there'}! ` +
-      `Welcome to your AI interview for the ${jobTitle} position. ` +
-      `I'll be asking you ${questionsRef.current.length} questions. ` +
-      `Please speak clearly and click Submit Answer when you've finished each response. ` +
-      `Let's begin. ${questionsRef.current[0]}`
-    )
-    startNewQuestion()
   }
 
-  function startRecording() {
-    if (!mediaStreamRef.current) return
-    recordingChunks.current = []
-    const mimeTypes = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
-    let mr: MediaRecorder | null = null
-    for (const mt of mimeTypes) { try { if (MediaRecorder.isTypeSupported(mt)) { mr = new MediaRecorder(mediaStreamRef.current, { mimeType: mt }); break } } catch {} }
-    if (!mr) { try { mr = new MediaRecorder(mediaStreamRef.current) } catch { return } }
-    mr.ondataavailable = (e) => { if (e.data.size > 0) recordingChunks.current.push(e.data) }
-    mr.start(1000); mediaRecorderRef.current = mr; setIsRecording(true)
-  }
-
-  function handleManualSubmit() {
-    const answer = (answerBufferRef.current || currentAnswer).trim()
-    if (!answer || phaseRef.current !== 'listening') return
-    answerBufferRef.current = ''; setCurrentAnswer('')
-    submitAnswer(answer)
-  }
-
-  const progress  = questionsRef.current.length > 0 ? (questionIndex / questionsRef.current.length) * 100 : 0
-  const timerPct  = (timeLeft / TIME_PER_QUESTION) * 100
-  const elapsedStr = `${Math.floor(elapsedTime/60).toString().padStart(2,'0')}:${(elapsedTime%60).toString().padStart(2,'0')}`
-  const avgScore = scores.length ? Math.round(scores.reduce((a,b)=>a+b,0)/scores.length) : null
-
-  if (!browserOk) return (
-    <Screen icon={<AlertCircle size={40} className="text-red-500 mx-auto mb-4"/>} title="Browser Not Supported" body={browserMsg}/>
-  )
-  if (phase === 'error') return (
-    <Screen icon={<AlertCircle size={40} className="text-red-500 mx-auto mb-4"/>} title="Error" body={errorMsg || 'Something went wrong.'}/>
-  )
-  if (phase === 'loading') return (
-    <div className="min-h-screen bg-gray-950 flex items-center justify-center">
-      <div className="text-center">
-        <div className="w-10 h-10 border-4 border-violet-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"/>
-        <p className="text-sm text-gray-400">Loading interview…</p>
-      </div>
-    </div>
-  )
-  if (phase === 'completed') return (
-    <div className="min-h-screen bg-gray-950 flex items-center justify-center p-6">
-      <div className="bg-gray-900 rounded-2xl border border-gray-700 p-10 max-w-md text-center">
-        <div className="w-16 h-16 bg-green-900/50 rounded-full flex items-center justify-center mx-auto mb-4 border border-green-700">
-          <CheckCircle size={32} className="text-green-400"/>
-        </div>
-        <h2 className="text-2xl font-bold text-white mb-2">Interview Complete!</h2>
-        {avgScore !== null && (
-          <div className="flex items-center justify-center gap-2 mb-4">
-            <Trophy size={16} className="text-yellow-400"/>
-            <span className={`text-2xl font-black ${avgScore >= 70 ? 'text-green-400' : avgScore >= 50 ? 'text-yellow-400' : 'text-red-400'}`}>
-              {avgScore}%
-            </span>
-            <span className="text-gray-400 text-sm">avg score</span>
-          </div>
-        )}
-        <p className="text-gray-400 text-sm mb-6">
-          {candidateName} has completed the AI interview for the <strong className="text-white">{jobTitle}</strong> position.
-        </p>
-        <Link href="/interviews"
-          className="inline-flex items-center gap-2 bg-violet-600 hover:bg-violet-700 text-white font-bold px-6 py-3 rounded-xl text-sm transition">
-          <ArrowLeft size={14}/> Back to Interviews
-        </Link>
-      </div>
-    </div>
-  )
-
-  /* ── MAIN INTERVIEW UI ── */
-  return (
-    <div className="h-screen bg-gray-950 flex flex-col overflow-hidden">
-      <audio ref={simliAudioRef} autoPlay className="hidden"/>
-
-      {/* Top Bar */}
-      <div className="flex items-center justify-between px-5 py-2.5 bg-gray-950 border-b border-gray-800 flex-shrink-0 z-30 relative">
-        <div className="flex items-center gap-2.5">
-          <Link href="/interviews" className="text-gray-500 hover:text-gray-300 transition mr-1">
-            <ArrowLeft size={16}/>
-          </Link>
-          <div className="w-8 h-8 bg-violet-600 rounded-lg flex items-center justify-center">
-            <Bot size={16} className="text-white"/>
-          </div>
-          <div>
-            <p className="text-white text-sm font-bold leading-tight">
-              AI Interview Room {jobTitle ? `| ${jobTitle}` : ''}
-            </p>
-            <div className="flex items-center gap-2">
-              <p className="text-gray-500 text-[10px]">
-                {candidateName || 'Loading…'} · Powered by Gemini AI
-              </p>
-              {simliEnabled && (
-                <span className={`flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-full border font-medium ${
-                  simliConnected
-                    ? 'text-emerald-400 border-emerald-800 bg-emerald-900/30'
-                    : simliLoading
-                    ? 'text-yellow-400 border-yellow-800 bg-yellow-900/30 animate-pulse'
-                    : 'text-gray-500 border-gray-700'
-                }`}>
-                  {simliConnected ? <Wifi size={8}/> : <WifiOff size={8}/>}
-                  {simliConnected ? 'Simli Live' : simliLoading ? 'Connecting…' : 'Simli Ready'}
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Elapsed timer */}
-        {phase !== 'ready' && (
-          <div className="absolute left-1/2 -translate-x-1/2">
-            <span className="text-white text-sm font-mono bg-black/60 border border-gray-700 px-4 py-1 rounded-full">
-              {elapsedStr}
-            </span>
-          </div>
-        )}
-
-        <button onClick={handleManualSubmit}
-          disabled={phase !== 'listening' || !currentAnswer.trim()}
-          className={`text-sm px-5 py-1.5 rounded-lg font-semibold transition ${
-            phase === 'listening' && currentAnswer.trim()
-              ? 'bg-violet-600 hover:bg-violet-700 text-white'
-              : 'bg-gray-800 text-gray-600 cursor-not-allowed'
-          }`}>
-          Submit
-        </button>
-      </div>
-
-      {/* Content */}
-      <div className="flex flex-1 overflow-hidden">
-
-        {/* Avatar area */}
-        <div className="relative flex-1 overflow-hidden bg-gray-950">
-
-          {/* Progress bar */}
-          {phase !== 'ready' && (
-            <div className="absolute top-0 left-0 right-0 h-0.5 bg-gray-800 z-10">
-              <div className="h-full bg-violet-500 transition-all duration-500" style={{ width: `${progress}%` }}/>
-            </div>
-          )}
-
-          {/* Simli real-time video */}
-          <video
-            ref={simliVideoRef}
-            autoPlay
-            playsInline
-            className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-700 ${
-              simliConnected ? 'opacity-100' : 'opacity-0'
-            }`}
-          />
-
-          {/* Fallback SVG avatar */}
-          <div className={`absolute inset-0 transition-opacity duration-700 ${simliConnected ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
-            <FallbackAvatar state={avatarState}/>
-          </div>
-
-          {/* Simli connecting overlay */}
-          {simliLoading && !simliConnected && (
-            <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 bg-black/70 border border-yellow-800/50 rounded-full px-4 py-2">
-              <div className="w-3 h-3 border-2 border-yellow-400 border-t-transparent rounded-full animate-spin"/>
-              <span className="text-yellow-300 text-xs font-medium">Connecting Simli avatar…</span>
-            </div>
-          )}
-
-          {/* Q counter */}
-          {(phase === 'listening' || phase === 'processing' || phase === 'speaking' || phase === 'opening') && (
-            <div className="absolute top-4 right-4 z-10">
-              <span className="bg-black/60 border border-gray-600 text-white text-xs font-medium px-3 py-1 rounded-full">
-                Q{questionIndex + 1} / {questionsRef.current.length}
-              </span>
-            </div>
-          )}
-
-          {/* Candidate webcam PIP */}
-          <div className="absolute top-4 left-4 z-10" style={{ width: 200, height: 150 }}>
-            <div className="relative w-full h-full rounded-xl overflow-hidden shadow-2xl border-2 border-gray-600 bg-gray-900">
-              <video ref={webcamVideoRef} autoPlay playsInline
-                className={`w-full h-full object-cover transition-opacity duration-700 ${webcamActive ? 'opacity-100' : 'opacity-0'}`}/>
-              {!webcamActive && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900">
-                  <User size={28} className="text-gray-600 mb-1"/>
-                  <p className="text-gray-500 text-xs">{candidateName || 'You'}</p>
-                  <p className="text-gray-600 text-[10px] mt-0.5">Camera loading…</p>
-                </div>
-              )}
-              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-2 py-1.5">
-                <p className="text-white text-[10px] font-medium truncate">{candidateName}</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Recording badge */}
-          {isRecording && (
-            <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 bg-black/70 border border-gray-700 rounded-full px-5 py-2">
-              <Circle size={8} className="fill-red-500 text-red-500 animate-pulse"/>
-              <span className="text-white text-xs font-medium tracking-wide">Recording...</span>
-              <div className="w-4 h-4 bg-red-600 rounded flex items-center justify-center ml-1">
-                <Square size={7} className="text-white fill-white"/>
-              </div>
-            </div>
-          )}
-
-          {/* Countdown ring */}
-          {phase === 'listening' && (
-            <div className="absolute bottom-5 right-5 z-10 flex flex-col items-center gap-1">
-              <svg width="52" height="52" viewBox="0 0 52 52">
-                <circle cx="26" cy="26" r="22" fill="rgba(0,0,0,0.5)" stroke="#374151" strokeWidth="4"/>
-                <circle cx="26" cy="26" r="22" fill="none"
-                  stroke={timeLeft < 30 ? '#ef4444' : '#7c3aed'}
-                  strokeWidth="4" strokeLinecap="round"
-                  strokeDasharray={`${2*Math.PI*22}`}
-                  strokeDashoffset={`${2*Math.PI*22*(1-timerPct/100)}`}
-                  transform="rotate(-90 26 26)" className="transition-all duration-1000"/>
-                <text x="26" y="31" textAnchor="middle" fontSize="12" fontWeight="bold"
-                  fill={timeLeft < 30 ? '#ef4444' : '#a78bfa'}>{timeLeft}</text>
-              </svg>
-              <span className="text-[9px] text-gray-500 font-medium">SEC LEFT</span>
-            </div>
-          )}
-
-          {/* Ready overlay */}
-          {phase === 'ready' && (
-            <div className="absolute inset-0 bg-black/65 flex items-center justify-center z-20">
-              <div className="bg-gray-900/90 backdrop-blur-md rounded-2xl p-8 max-w-sm w-full mx-4 text-center border border-gray-700 shadow-2xl">
-                <div className="w-14 h-14 bg-violet-900/50 border border-violet-700 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <Bot size={28} className="text-violet-400"/>
-                </div>
-                <h2 className="text-xl font-bold text-white mb-2">Ready to Start Interview?</h2>
-                <p className="text-sm text-gray-400 mb-1">
-                  <strong className="text-white">{questionsRef.current.length} questions</strong> for
-                  {candidateName && <> <strong className="text-white">{candidateName}</strong></>}
-                  {jobTitle && <> · <strong className="text-white">{jobTitle}</strong></>}
-                </p>
-                <p className="text-xs text-gray-500 mb-5">2 min per question · AI scores automatically</p>
-                <div className={`flex items-center justify-center gap-2 mb-5 text-xs px-3 py-2 rounded-xl border ${
-                  simliEnabled
-                    ? 'bg-emerald-900/20 border-emerald-800 text-emerald-400'
-                    : 'bg-gray-800/50 border-gray-700 text-gray-400'
-                }`}>
-                  {simliEnabled
-                    ? <><Wifi size={12}/> Simli real-time avatar enabled</>
-                    : <><Bot size={12}/> Using animated avatar (add SIMLI_API_KEY for live avatar)</>
-                  }
-                </div>
-                <button onClick={startInterview}
-                  className="w-full bg-violet-600 hover:bg-violet-700 text-white font-bold px-8 py-3 rounded-xl text-sm transition shadow-lg">
-                  Start Interview →
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Right: Live Transcript */}
-        <div className="w-72 xl:w-80 bg-gray-900 border-l border-gray-800 flex flex-col flex-shrink-0">
-          <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between flex-shrink-0">
-            <p className="text-white font-semibold text-sm">Live Transcript</p>
-            {(phase === 'listening' || phase === 'speaking') && (
-              <span className="flex items-center gap-1.5 text-[10px] text-green-400 bg-green-900/30 border border-green-800 px-2 py-0.5 rounded-full">
-                <Circle size={6} className="fill-green-400 text-green-400 animate-pulse"/> Live
-              </span>
-            )}
-          </div>
-          <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
-            {transcript.length === 0 && (
-              <div className="text-center text-gray-600 text-xs mt-8">
-                <Bot size={24} className="mx-auto mb-2 opacity-30"/>
-                Transcript will appear here once the interview starts
-              </div>
-            )}
-            {transcript.map((t, i) => (
-              <div key={i} className={`flex gap-2 ${t.role === 'candidate' ? 'justify-end' : 'justify-start'}`}>
-                {t.role === 'interviewer' && (
-                  <div className="w-5 h-5 rounded-full flex-shrink-0 bg-violet-800 flex items-center justify-center mt-0.5">
-                    <Bot size={10} className="text-violet-300"/>
-                  </div>
-                )}
-                <div className={`max-w-[85%] text-xs rounded-xl px-3 py-2 leading-relaxed ${
-                  t.role === 'interviewer' ? 'bg-gray-800 text-gray-200 rounded-tl-none' : 'bg-violet-700/50 text-violet-100 rounded-tr-none'
-                }`}>
-                  {t.text}
-                </div>
-                {t.role === 'candidate' && (
-                  <div className="w-5 h-5 rounded-full flex-shrink-0 bg-gray-700 flex items-center justify-center mt-0.5">
-                    <User size={10} className="text-gray-300"/>
-                  </div>
-                )}
-              </div>
-            ))}
-            {liveText && (
-              <div className="flex gap-2 justify-end">
-                <div className="max-w-[85%] text-xs rounded-xl px-3 py-2 bg-violet-900/30 text-violet-300 italic border border-dashed border-violet-700/50 rounded-tr-none">
-                  {liveText}
-                </div>
-                <div className="w-5 h-5 rounded-full flex-shrink-0 bg-gray-700 flex items-center justify-center mt-0.5">
-                  <User size={10} className="text-gray-300"/>
-                </div>
-              </div>
-            )}
-            <div ref={transcriptEndRef}/>
-          </div>
-
-          {/* Answer controls */}
-          {phase === 'listening' && (
-            <div className="border-t border-gray-800 p-3 space-y-2 flex-shrink-0">
-              <div className="flex items-center gap-2">
-                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${liveText ? 'bg-red-500 animate-pulse' : currentAnswer ? 'bg-green-500' : 'bg-violet-400 animate-pulse'}`}/>
-                <span className="text-[10px] text-gray-400 flex-1 truncate">
-                  {liveText ? 'Listening…' : currentAnswer ? 'Ready to submit' : 'Speak your answer'}
-                </span>
-                <button onClick={() => {
-                  setMicEnabled(p => !p)
-                  if (micEnabled) { shouldListenRef.current = false; try { recognitionRef.current?.stop() } catch {} }
-                  else startListening()
-                }} className={`flex items-center gap-1 text-[10px] px-2 py-1 rounded-lg border transition flex-shrink-0
-                  ${micEnabled ? 'border-gray-700 text-gray-400' : 'border-red-800 bg-red-900/30 text-red-400'}`}>
-                  {micEnabled ? <Mic size={10}/> : <MicOff size={10}/>}
-                  {micEnabled ? 'On' : 'Off'}
-                </button>
-              </div>
-              {currentAnswer && !liveText && (
-                <div className="bg-gray-800/50 border border-gray-700 rounded-lg px-3 py-2 max-h-20 overflow-y-auto">
-                  <p className="text-[10px] font-medium text-gray-400 mb-1">Your answer:</p>
-                  <p className="text-xs text-gray-300 leading-relaxed">{currentAnswer}</p>
-                </div>
-              )}
-              <div className="flex gap-2">
-                {currentAnswer && (
-                  <button onClick={() => { answerBufferRef.current = ''; setCurrentAnswer(''); setLiveText(''); startListening() }}
-                    className="flex items-center gap-1 text-xs px-3 py-2 rounded-lg border border-gray-700 text-gray-400 hover:bg-gray-800 transition">
-                    <Mic size={11}/> Again
-                  </button>
-                )}
-                <button onClick={handleManualSubmit} disabled={!currentAnswer.trim()}
-                  className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition ${
-                    currentAnswer.trim() ? 'bg-violet-600 hover:bg-violet-700 text-white' : 'bg-gray-800 text-gray-600 cursor-not-allowed'
-                  }`}>
-                  <CheckCircle size={12}/> Submit Answer
-                </button>
-              </div>
-            </div>
-          )}
-          {phase === 'processing' && (
-            <div className="border-t border-gray-800 p-4 flex items-center gap-2 flex-shrink-0">
-              <div className="w-4 h-4 border-2 border-violet-500 border-t-transparent rounded-full animate-spin flex-shrink-0"/>
-              <span className="text-xs text-gray-400">AI evaluating your answer…</span>
-            </div>
-          )}
-
-          {/* Live scores */}
-          {scores.length > 0 && (
-            <div className="border-t border-gray-800 p-3 flex-shrink-0">
-              <p className="text-[10px] font-semibold text-gray-500 uppercase mb-2">Scores</p>
-              <div className="flex flex-wrap gap-1.5">
-                {scores.map((s, i) => (
-                  <span key={i} className={`text-xs font-bold px-2 py-0.5 rounded-full ${
-                    s >= 70 ? 'bg-green-900/40 text-green-400 border border-green-800' :
-                    s >= 50 ? 'bg-yellow-900/40 text-yellow-400 border border-yellow-800' :
-                    'bg-red-900/40 text-red-400 border border-red-800'
-                  }`}>Q{i+1}: {s}%</span>
-                ))}
-              </div>
-              {avgScore !== null && (
-                <p className="text-xs text-gray-400 mt-2">
-                  Avg: <span className={`font-bold ${avgScore >= 70 ? 'text-green-400' : avgScore >= 50 ? 'text-yellow-400' : 'text-red-400'}`}>{avgScore}%</span>
-                </p>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-/* ─────────────────────────────────────────────────────────────────────────────
-   Session Management View (when no applicationId in URL)
-───────────────────────────────────────────────────────────────────────────── */
-interface Session {
-  id: string
-  status: string
-  ai_score: number | null
-  ai_summary: string | null
-  recording_url: string | null
-  created_at: string
-  application?: {
-    candidate?: { full_name: string; email: string; phone: string }
-    job?: { title: string }
-  }
-}
-
-function SessionManagementView() {
-  const [sessions,  setSessions]  = useState<Session[]>([])
-  const [loading,   setLoading]   = useState(true)
-  const [filter,    setFilter]    = useState<'all'|'pending'|'completed'>('all')
-  const [copied,    setCopied]    = useState<string | null>(null)
-
-  useEffect(() => {
-    fetch('/api/interviews/ai-sessions')
-      .then(r => r.json())
-      .then(d => {
-        const list = Array.isArray(d) ? d : (d?.sessions || [])
-        setSessions(list)
+  /* ── Save to DB on completion ── */
+  async function saveInterview() {
+    if (!sessionDbIdRef.current) return
+    try {
+      const res = await fetch('/api/interviews/ai-interview', {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          sessionId:     sessionDbIdRef.current,
+          transcript:    transcriptRef.current,
+          avgScore:      avgScore ?? Math.round((scoresRef.current.reduce((a, b) => a + b, 0) || 0) / Math.max(1, scoresRef.current.length)),
+          candidateName: candidateNameRef.current,
+          jobTitle:      jobTitleRef.current,
+        }),
       })
-      .finally(() => setLoading(false))
+      const data = await res.json()
+      if (data.evaluation) setEvaluation(data.evaluation)
+    } catch { /* non-fatal */ }
+    micStreamRef.current?.getTracks().forEach(t => t.stop())
+  }
+
+  /* ── Start interview ── */
+  async function startInterview() {
+    setPhaseSync('opening')
+    addLog('Starting interview…')
+
+    // Opening speech
+    const res = await fetch('/api/interviews/ai-interview', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        candidateName:   candidateNameRef.current,
+        jobTitle:        jobTitleRef.current,
+        questions:       questionsRef.current,
+        questionIndex:   0,
+        candidateAnswer: null,
+        scores:          [],
+      }),
+    })
+    const data = await res.json()
+
+    if (data.speech) await avatarSpeak(data.speech)
+    startNewQuestion()   // first question — start fresh timer
+  }
+
+  /* ── End interview manually ── */
+  async function endInterview() {
+    clearTimeout(silenceTimerRef.current)
+    stopListening()
+    const farewell = `Thank you so much for your time today, ${candidateNameRef.current}. We really appreciate your participation and will be in touch soon with the next steps.`
+    await avatarSpeak(farewell)
+    setPhaseSync('completed')
+    setAvatarState('idle')
+    await saveInterview()
+  }
+
+  function toggleMic() {
+    if (!recognitionRef.current) return
+    if (micEnabled) {
+      stopListening()
+      shouldListenRef.current = false
+    } else {
+      startListening()
+    }
+    setMicEnabled(p => !p)
+  }
+
+  /* ── Cleanup ── */
+  useEffect(() => {
+    return () => {
+      clearTimeout(silenceTimerRef.current)
+      clearInterval(questionTimerRef.current)
+      shouldListenRef.current = false
+      try { recognitionRef.current?.stop() } catch { /* ignore */ }
+      speechSynthesis.cancel()
+      micStreamRef.current?.getTracks().forEach(t => t.stop())
+    }
   }, [])
 
-  const filtered = sessions.filter(s =>
-    filter === 'all'       ? true :
-    filter === 'pending'   ? s.status !== 'completed' :
-    filter === 'completed' ? s.status === 'completed' : true
-  )
+  /* ── Derived ── */
+  const isLive       = ['opening','listening','processing','speaking'].includes(phase)
+  const totalQ       = questions.length || 1
+  const progressPct  = Math.round(((questionIndex) / totalQ) * 100)
+  const scoreColor   = avgScore === null ? 'text-gray-400' : avgScore >= 75 ? 'text-green-500' : avgScore >= 55 ? 'text-amber-500' : 'text-red-500'
 
-  const pendingCount   = sessions.filter(s => s.status !== 'completed').length
-  const completedCount = sessions.filter(s => s.status === 'completed').length
-  const avgScore = completedCount
-    ? Math.round(sessions.filter(s => s.ai_score).reduce((a,s) => a + (s.ai_score||0), 0) / completedCount)
-    : null
-
-  function copyLink(sessionId: string) {
-    const link = `${window.location.origin}/candidate-interview?sessionId=${sessionId}`
-    navigator.clipboard.writeText(link)
-    setCopied(sessionId)
-    setTimeout(() => setCopied(null), 2000)
+  const signalColors: Record<string, string> = {
+    Strong:  'bg-green-100 text-green-700',
+    Good:    'bg-blue-100 text-blue-700',
+    Neutral: 'bg-gray-100 text-gray-600',
+    Weak:    'bg-amber-100 text-amber-700',
+    Poor:    'bg-red-100 text-red-600',
   }
 
+  /* ═══════════════════════════════════════════════════════════════ */
   return (
-    <div className="p-8 max-w-3xl mx-auto">
-      <div className="mb-6">
-        <div className="flex items-center gap-2 mb-1">
-          <Link href="/interviews" className="text-gray-400 hover:text-gray-600 transition">
-            <ArrowLeft size={16}/>
-          </Link>
-          <div className="p-2 bg-violet-100 rounded-lg">
-            <Bot size={18} className="text-violet-600"/>
-          </div>
-          <h1 className="text-2xl font-bold text-gray-900">AI Interview Room</h1>
+    <div className="p-4 max-w-6xl mx-auto">
+
+      {/* Back + header */}
+      <Link href="/interviews" className="inline-flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700 mb-4">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m15 18-6-6 6-6"/></svg>
+        Back to Interviews
+      </Link>
+
+      <div className="flex items-start justify-between mb-5">
+        <div>
+          <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+            <Bot size={20} className="text-violet-600" /> AI Interview Room
+          </h1>
+          {candidateName && (
+            <p className="text-sm text-gray-500 mt-0.5">{candidateName} · {jobTitle}</p>
+          )}
         </div>
-        <p className="text-gray-500 text-sm ml-12">
-          Manage AI interview sessions. Copy a candidate link and send it — the AI interviews them automatically.
-        </p>
+        <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
+          phase === 'completed'  ? 'bg-green-100 text-green-700'
+          : phase === 'listening'  ? 'bg-blue-100 text-blue-700'
+          : phase === 'speaking'   ? 'bg-violet-100 text-violet-700'
+          : phase === 'processing' ? 'bg-amber-100 text-amber-700'
+          : phase === 'error'      ? 'bg-red-100 text-red-600'
+          : 'bg-gray-100 text-gray-600'
+        }`}>
+          {phase === 'setup'       ? 'Loading'
+          : phase === 'ready'      ? 'Ready'
+          : phase === 'opening'    ? 'Starting…'
+          : phase === 'listening'  ? '● Listening'
+          : phase === 'processing' ? 'Thinking…'
+          : phase === 'speaking'   ? '▶ Speaking'
+          : phase === 'completed'  ? '✓ Complete'
+          : 'Error'}
+        </span>
       </div>
 
-      {/* How it works */}
-      <div className="bg-violet-50 border border-violet-200 rounded-xl p-4 mb-6 grid grid-cols-3 gap-4">
-        {[
-          { num: '1', label: 'HR copies link', desc: 'Click a session below → copy the candidate interview link' },
-          { num: '2', label: 'Candidate opens it', desc: 'Candidate opens link on their device — no login needed' },
-          { num: '3', label: 'Simli AI interviews', desc: 'Photorealistic Simli avatar asks questions & scores automatically' },
-        ].map(s => (
-          <div key={s.num} className="text-center">
-            <div className="w-7 h-7 bg-violet-600 text-white rounded-full flex items-center justify-center text-xs font-bold mx-auto mb-1">{s.num}</div>
-            <div className="text-xs font-semibold text-violet-800">{s.label}</div>
-            <div className="text-xs text-violet-600 mt-0.5">{s.desc}</div>
+      {/* Browser not supported */}
+      {!browserOk && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-5 mb-6 flex gap-3">
+          <AlertCircle size={20} className="text-amber-500 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-semibold text-amber-800">Browser not supported</p>
+            <p className="text-sm text-amber-700 mt-1">{browserMsg}</p>
           </div>
-        ))}
-      </div>
-
-      {/* Stats */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
-        {[
-          { label: 'Pending', value: pendingCount, color: 'text-amber-600', bg: 'bg-amber-50 border-amber-200' },
-          { label: 'Completed', value: completedCount, color: 'text-green-600', bg: 'bg-green-50 border-green-200' },
-          { label: 'Avg Score', value: avgScore !== null ? `${avgScore}%` : '—', color: 'text-violet-600', bg: 'bg-violet-50 border-violet-200' },
-        ].map(s => (
-          <div key={s.label} className={`${s.bg} border rounded-xl p-4 text-center`}>
-            <div className={`text-2xl font-black ${s.color}`}>{s.value}</div>
-            <div className="text-xs text-gray-500 mt-0.5">{s.label}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Filter */}
-      <div className="flex gap-2 mb-4">
-        {(['all','pending','completed'] as const).map(f => (
-          <button key={f} onClick={() => setFilter(f)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition capitalize ${
-              filter === f ? 'bg-violet-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-            }`}>
-            {f === 'all' ? 'All' : f === 'pending' ? `Pending (${pendingCount})` : `Completed (${completedCount})`}
-          </button>
-        ))}
-      </div>
-
-      {loading && <div className="text-center py-12 text-gray-400 text-sm">Loading sessions…</div>}
-
-      {!loading && filtered.length === 0 && (
-        <div className="text-center py-12 border-2 border-dashed border-gray-200 rounded-xl text-gray-400 text-sm">
-          No sessions found. Create AI interview sessions from the Interviews page.
         </div>
       )}
 
-      <div className="space-y-3">
-        {filtered.map(session => {
-          const name  = session.application?.candidate?.full_name || 'Candidate'
-          const job   = session.application?.job?.title || 'Unknown Role'
-          const score = session.ai_score
-          const sc = session.status === 'completed'
-            ? { label: 'Completed', color: 'bg-green-100 text-green-700 border-green-200', icon: CheckCircle }
-            : session.status === 'in_progress'
-            ? { label: 'In Progress', color: 'bg-blue-100 text-blue-700 border-blue-200', icon: Zap }
-            : { label: 'Awaiting Candidate', color: 'bg-amber-100 text-amber-700 border-amber-200', icon: Clock }
-          const Icon = sc.icon
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
 
-          return (
-            <div key={session.id} className={`bg-white border rounded-xl shadow-sm p-4 ${
-              session.status === 'completed' ? 'border-green-200' :
-              session.status === 'in_progress' ? 'border-blue-300' : 'border-gray-200'
-            }`}>
-              <div className="flex items-center gap-3">
-                <div className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0 ${
-                  session.status === 'completed' ? 'bg-green-100 text-green-700' :
-                  session.status === 'in_progress' ? 'bg-blue-100 text-blue-700' : 'bg-violet-100 text-violet-700'
-                }`}>{name.charAt(0)}</div>
-                <div className="flex-1 min-w-0">
-                  <div className="font-semibold text-sm text-gray-900">{name}</div>
-                  <div className="text-xs text-gray-500 truncate">{job}</div>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  {score !== null && score !== undefined && (
-                    <span className={`text-sm font-black ${score >= 70 ? 'text-green-600' : score >= 50 ? 'text-amber-600' : 'text-red-500'}`}>
-                      {score}%
-                    </span>
-                  )}
-                  <span className={`text-xs px-2 py-0.5 rounded-full border font-medium flex items-center gap-1 ${sc.color}`}>
-                    <Icon size={10}/> {sc.label}
-                  </span>
+        {/* ── Video panels ── */}
+        <div className="lg:col-span-2 space-y-4">
+
+          <div className="grid grid-cols-2 gap-3">
+
+            {/* AI avatar panel */}
+            <div className="rounded-2xl overflow-hidden aspect-video shadow-lg">
+              <AnimatedAvatar state={avatarState} name="Alex" />
+            </div>
+
+            {/* Candidate webcam */}
+            <div className="relative bg-gray-800 rounded-2xl overflow-hidden aspect-video shadow-lg">
+              <video
+                ref={webcamVideoRef}
+                autoPlay
+                playsInline
+                muted
+                className="w-full h-full object-cover scale-x-[-1]"
+              />
+              {/* No-camera fallback */}
+              <div className="absolute inset-0 flex items-center justify-center" id="cam-fallback">
+                <div className="text-center text-gray-500">
+                  <User size={32} className="mx-auto mb-1 opacity-40" />
+                  <p className="text-xs opacity-40">No camera</p>
                 </div>
               </div>
-
-              {session.status !== 'completed' ? (
-                <div className="mt-3 flex items-center gap-2">
-                  <input readOnly
-                    value={`${typeof window !== 'undefined' ? window.location.origin : ''}/candidate-interview?sessionId=${session.id}`}
-                    className="flex-1 border border-gray-200 rounded-lg px-3 py-1.5 text-xs text-gray-600 bg-gray-50 focus:outline-none"/>
-                  <button onClick={() => copyLink(session.id)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition flex-shrink-0 ${
-                      copied === session.id ? 'bg-green-600 text-white' : 'bg-violet-600 hover:bg-violet-700 text-white'
-                    }`}>
-                    {copied === session.id ? <CheckCircle size={11}/> : <Copy size={11}/>}
-                    {copied === session.id ? 'Copied!' : 'Copy Link'}
-                  </button>
+              {isLive && (
+                <div className="absolute top-2 left-2 flex items-center gap-1 bg-black/70 text-white text-xs px-2 py-0.5 rounded-full">
+                  <Circle size={6} className="fill-red-500 text-red-500 animate-pulse" /> REC
                 </div>
-              ) : (
-                session.ai_summary && (
-                  <div className="mt-3 bg-gray-50 rounded-xl p-3">
-                    <p className="text-xs text-gray-700 leading-relaxed">{session.ai_summary}</p>
+              )}
+              {phase === 'listening' && (
+                <div className="absolute top-2 right-2 flex items-center gap-1 bg-blue-600/80 text-white text-xs px-2 py-0.5 rounded-full">
+                  <Mic size={9} /> Listening
+                </div>
+              )}
+              <div className="absolute bottom-2 left-2 text-xs bg-black/60 text-white px-2 py-0.5 rounded-full">
+                {candidateName || 'Candidate'}
+              </div>
+            </div>
+          </div>
+
+          {/* Setup log + start button */}
+          {(phase === 'setup' || phase === 'ready') && (
+            <div className="bg-gray-50 border border-gray-200 rounded-xl p-4">
+              <div className="space-y-1 mb-4 max-h-28 overflow-y-auto">
+                {log.map((l, i) => (
+                  <p key={i} className={`text-xs font-mono ${
+                    l.startsWith('✗') ? 'text-red-500'
+                    : l.startsWith('✓') ? 'text-green-600'
+                    : l.startsWith('⚠') ? 'text-amber-500'
+                    : 'text-gray-500'
+                  }`}>{l}</p>
+                ))}
+                {phase === 'setup' && (
+                  <div className="flex items-center gap-2 text-xs text-gray-400">
+                    <div className="w-3 h-3 border border-violet-500 border-t-transparent rounded-full animate-spin" />
+                    Loading…
                   </div>
-                )
+                )}
+              </div>
+              {phase === 'ready' && (
+                <button
+                  onClick={startInterview}
+                  className="w-full bg-violet-600 hover:bg-violet-700 text-white font-semibold py-3 rounded-xl text-sm transition flex items-center justify-center gap-2"
+                >
+                  <Mic size={15} /> Start AI Interview
+                </button>
               )}
             </div>
-          )
-        })}
+          )}
+
+          {/* Live Q + candidate speech display */}
+          {isLive && (
+            <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
+              {/* Current question + countdown timer */}
+              <div className="flex items-start gap-2.5">
+                <div className="w-6 h-6 rounded-full bg-violet-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <Bot size={12} className="text-violet-600" />
+                </div>
+                <p className="text-sm text-gray-700 leading-relaxed font-medium flex-1">
+                  Q{questionIndex + 1}: {questions[questionIndex] ?? '…'}
+                </p>
+                {/* Countdown timer — only show while candidate is answering */}
+                {phase === 'listening' && (
+                  <div className={`flex-shrink-0 flex flex-col items-center ml-3 ${
+                    timeLeft <= 30 ? 'text-red-500' : timeLeft <= 60 ? 'text-amber-500' : 'text-gray-400'
+                  }`}>
+                    <span className={`text-lg font-black tabular-nums leading-none ${timeLeft <= 10 ? 'animate-pulse' : ''}`}>
+                      {Math.floor(timeLeft / 60)}:{String(timeLeft % 60).padStart(2, '0')}
+                    </span>
+                    <span className="text-[9px] font-medium uppercase tracking-wide">left</span>
+                    {/* Circular progress */}
+                    <svg width="32" height="32" viewBox="0 0 36 36" className="mt-1 -rotate-90">
+                      <circle cx="18" cy="18" r="14" fill="none" stroke="currentColor" strokeOpacity="0.15" strokeWidth="3"/>
+                      <circle
+                        cx="18" cy="18" r="14" fill="none" stroke="currentColor" strokeWidth="3"
+                        strokeDasharray={`${2 * Math.PI * 14}`}
+                        strokeDashoffset={`${2 * Math.PI * 14 * (1 - timeLeft / TIME_PER_QUESTION)}`}
+                        strokeLinecap="round"
+                        style={{ transition: 'stroke-dashoffset 1s linear' }}
+                      />
+                    </svg>
+                  </div>
+                )}
+              </div>
+
+              {/* Live transcription */}
+              {phase === 'listening' && (
+                <div className="flex items-start gap-2.5">
+                  <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 ${micEnabled ? 'bg-blue-100' : 'bg-gray-100'}`}>
+                    <Mic size={11} className={micEnabled ? 'text-blue-600' : 'text-gray-400'} />
+                  </div>
+                  <div className="flex-1">
+                    {liveText && <p className="text-sm text-gray-400 italic">{liveText}</p>}
+                    {currentAnswer && <p className="text-sm text-gray-800 mt-0.5">{currentAnswer}</p>}
+                    {!liveText && !currentAnswer && (
+                      <p className="text-xs text-gray-400 italic">Speak your answer, then click <strong>Done Answering</strong> when finished…</p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {phase === 'processing' && (
+                <div className="flex items-center gap-2 text-xs text-amber-600">
+                  <div className="w-3 h-3 border border-amber-500 border-t-transparent rounded-full animate-spin" />
+                  Evaluating response…
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Controls */}
+          {isLive && (
+            <div className="flex items-center gap-3 flex-wrap">
+              <button
+                onClick={toggleMic}
+                disabled={phase === 'speaking' || phase === 'processing'}
+                className={`flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg border transition disabled:opacity-40 ${
+                  micEnabled ? 'border-gray-200 text-gray-600 hover:bg-gray-50' : 'border-red-200 bg-red-50 text-red-600'
+                }`}
+              >
+                {micEnabled ? <Mic size={13} /> : <MicOff size={13} />}
+                {micEnabled ? 'Mute' : 'Unmute'}
+              </button>
+
+              {/* Manual submit — primary way to submit, more reliable than silence detection */}
+              {phase === 'listening' && (
+                <button
+                  onClick={handleManualSubmit}
+                  disabled={!currentAnswer}
+                  className="flex items-center gap-1.5 text-xs px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-white font-semibold disabled:opacity-30 transition"
+                  title="Click when you've finished answering"
+                >
+                  <CheckCircle size={13} /> Done Answering
+                </button>
+              )}
+
+              <span className="text-xs text-gray-400 bg-gray-50 px-2 py-1 rounded-lg">
+                Web Speech API · Free
+              </span>
+
+              <button
+                onClick={endInterview}
+                disabled={phase === 'processing' || phase === 'speaking'}
+                className="ml-auto flex items-center gap-1.5 text-xs px-4 py-2 rounded-lg bg-gray-700 text-white hover:bg-gray-900 disabled:opacity-40 transition"
+              >
+                End Interview
+              </button>
+            </div>
+          )}
+
+          {/* Transcript */}
+          {transcript.length > 0 && (
+            <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+              <button
+                onClick={() => setShowTranscript(v => !v)}
+                className="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+              >
+                <span>Transcript ({transcript.length} entries)</span>
+                {showTranscript ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+              </button>
+              {showTranscript && (
+                <div className="divide-y divide-gray-50 max-h-72 overflow-y-auto">
+                  {[...transcript].reverse().map((line, i) => (
+                    <div key={i} className={`px-4 py-3 flex gap-3 ${line.role === 'interviewer' ? 'bg-violet-50' : 'bg-white'}`}>
+                      <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 ${line.role === 'interviewer' ? 'bg-violet-200' : 'bg-gray-200'}`}>
+                        {line.role === 'interviewer' ? <Bot size={11} className="text-violet-700" /> : <User size={11} className="text-gray-600" />}
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-0.5">
+                          <span className="text-xs font-semibold text-gray-500 capitalize">{line.role}</span>
+                          {line.score !== undefined && (
+                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+                              line.score >= 75 ? 'bg-green-100 text-green-700' : line.score >= 55 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-600'
+                            }`}>{line.score}/100</span>
+                          )}
+                        </div>
+                        <p className="text-sm text-gray-800">{line.text}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* ── Right panel: score + info ── */}
+        <div className="space-y-4">
+
+          {/* Progress */}
+          {(isLive || phase === 'completed') && (
+            <div className="bg-white border border-gray-200 rounded-xl p-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-semibold text-gray-500">Progress</span>
+                <span className="text-xs text-gray-600">Q{Math.min(questionIndex + 1, totalQ)} / {totalQ}</span>
+              </div>
+              <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                <div className="h-full bg-violet-500 rounded-full transition-all duration-500" style={{ width: `${progressPct}%` }} />
+              </div>
+              <div className="mt-2 flex items-center justify-between text-[10px] text-gray-400">
+                <span>⏱ {Math.floor(TIME_PER_QUESTION / 60)} min per question</span>
+                <span>{totalQ * Math.floor(TIME_PER_QUESTION / 60)} min total</span>
+              </div>
+            </div>
+          )}
+
+          {/* Score hidden from candidate — HR reviews scores on Video Recordings page */}
+
+          {/* Completed */}
+          {phase === 'completed' && (
+            <div className="bg-green-50 border border-green-200 rounded-xl p-4 text-center">
+              <CheckCircle size={28} className="text-green-500 mx-auto mb-2" />
+              <p className="text-sm font-semibold text-green-700">Interview Complete</p>
+              <p className="text-xs text-gray-500 mt-1">Results saved. HR can review the score & evaluation in Video Recordings.</p>
+              <div className="mt-3 flex flex-col gap-2">
+                <Link href="/pre-screen/recordings" className="inline-block text-xs bg-violet-600 hover:bg-violet-700 text-white px-3 py-1.5 rounded-lg font-medium transition">View Score & Evaluation →</Link>
+                <Link href="/interviews" className="inline-block text-xs text-violet-600 hover:underline">← Back to Interviews</Link>
+              </div>
+            </div>
+          )}
+
+          {/* Free stack badge */}
+          <div className="bg-gray-50 rounded-xl p-3 space-y-1.5">
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Powered by (Free)</p>
+            {[
+              { label: 'Animated Avatar',    sub: 'CSS/SVG · zero cost' },
+              { label: 'Web Speech API',     sub: 'Browser STT · zero cost' },
+              { label: 'Speech Synthesis',   sub: 'Browser TTS · zero cost' },
+              { label: 'Gemini AI',           sub: 'Interview logic · free' },
+            ].map(({ label, sub }) => (
+              <div key={label} className="flex items-center gap-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0" />
+                <div>
+                  <span className="text-[10px] font-medium text-gray-700">{label}</span>
+                  <span className="text-[10px] text-gray-400 ml-1">· {sub}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   )
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   Route entry: if ?applicationId present → full interview room; else → session list
+   Legacy Tavus session viewer (unchanged)
 ───────────────────────────────────────────────────────────────────────────── */
-function AIRoomInner() {
-  const searchParams   = useSearchParams()
-  const applicationId  = searchParams.get('applicationId')
-  const roundId        = searchParams.get('roundId')
+function LegacySessionViewer({ sessionId }: { sessionId: string }) {
+  const [session, setSession] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+  const [showTx,  setShowTx]  = useState(false)
+  const [retrying, setRetrying] = useState(false)
+  const pollRef = useRef<ReturnType<typeof setInterval>>()
 
-  if (applicationId) {
-    return <AIRoomInterviewInner applicationId={applicationId} roundId={roundId}/>
-  }
-  return <SessionManagementView/>
-}
+  const load = useCallback(async () => {
+    const res  = await fetch(`/api/interviews/ai-session?sessionId=${sessionId}`)
+    const data = await res.json()
+    if (data.session) setSession(data.session)
+    setLoading(false)
+  }, [sessionId])
 
-export default function AIInterviewRoomPage() {
-  return (
-    <Suspense fallback={
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="w-10 h-10 border-4 border-violet-600 border-t-transparent rounded-full animate-spin"/>
+  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    if (session?.status === 'in_progress') pollRef.current = setInterval(load, 10_000)
+    else clearInterval(pollRef.current)
+    return () => clearInterval(pollRef.current)
+  }, [session?.status, load])
+
+  if (loading) return (
+    <div className="p-8 flex items-center justify-center min-h-[400px]">
+      <div className="text-center text-gray-400">
+        <div className="w-8 h-8 border-2 border-red-600 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+        <p className="text-sm">Loading session…</p>
       </div>
-    }>
-      <AIRoomInner/>
-    </Suspense>
+    </div>
+  )
+  if (!session) return (
+    <div className="p-8 text-center text-gray-400">
+      <AlertCircle size={28} className="mx-auto mb-2 text-red-400" />
+      <p className="text-sm">Session not found.</p>
+      <Link href="/interviews" className="text-xs text-violet-600 hover:underline mt-2 inline-block">← Back</Link>
+    </div>
+  )
+
+  const isDone = session.status === 'completed'
+
+  async function retryWithTavus() {
+    setRetrying(true)
+    // Redirect to the free browser-based AI bot (Gemini + Web Speech API)
+    if (session.application_id) {
+      window.location.href = `/interview/ai-room?mode=custom&applicationId=${session.application_id}`
+    } else {
+      alert('No application linked to this session. Please start the interview from a candidate profile.')
+      setRetrying(false)
+    }
+  }
+
+  return (
+    <div className="p-6 max-w-5xl mx-auto">
+      <Link href="/interviews" className="inline-flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700 mb-5">
+        <ArrowLeft size={13} /> Back to Interviews
+      </Link>
+      <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2 mb-6">
+        <Bot size={20} className="text-violet-600" /> AI Interview Session
+      </h1>
+      <div className="bg-gray-900 rounded-2xl overflow-hidden aspect-video relative">
+        {session.tavus_conversation_url && !isDone ? (
+          <iframe src={session.tavus_conversation_url} allow="camera; microphone; autoplay; fullscreen" className="w-full h-full" title="AI Interview" />
+        ) : isDone ? (
+          <div className="w-full h-full flex flex-col items-center justify-center text-white">
+            <CheckCircle size={48} className="text-green-400 mb-3" />
+            <p className="text-lg font-semibold">Interview Completed</p>
+          </div>
+        ) : (
+          <div className="w-full h-full flex flex-col items-center justify-center text-white">
+            <Bot size={40} className="text-violet-300 mb-3" />
+            <p className="font-semibold">Demo Mode</p>
+            <button onClick={retryWithTavus} disabled={retrying} className="mt-4 flex items-center gap-2 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white text-sm font-semibold px-5 py-2.5 rounded-xl transition">
+              {retrying ? <><RefreshCw size={14} className="animate-spin" /> Launching…</> : <><Video size={14} /> Start Live AI Interview</>}
+            </button>
+          </div>
+        )}
+      </div>
+      {session.transcript?.length > 0 && (
+        <div className="mt-4 bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <button onClick={() => setShowTx(v => !v)} className="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+            <span>Transcript</span>
+            {showTx ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+          </button>
+          {showTx && (
+            <div className="divide-y divide-gray-50 max-h-72 overflow-y-auto">
+              {session.transcript.map((line: any, i: number) => (
+                <div key={i} className={`px-4 py-3 flex gap-3 ${line.role === 'interviewer' ? 'bg-violet-50' : ''}`}>
+                  <p className="text-sm text-gray-800">{line.content}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
-function Screen({ icon, title, body }: { icon: React.ReactNode; title: string; body: string }) {
+/* ─────────────────────────────────────────────────────────────────────────────
+   Router
+───────────────────────────────────────────────────────────────────────────── */
+function AIRoomContent() {
+  const sp            = useSearchParams()
+  const sessionId     = sp.get('sessionId')
+  const applicationId = sp.get('applicationId')
+  const roundId       = sp.get('roundId')
+  const mode          = sp.get('mode')
+
+  if (mode === 'custom' && applicationId) return <CustomBotRoom applicationId={applicationId} roundId={roundId} />
+  if (sessionId)                          return <LegacySessionViewer sessionId={sessionId} />
+
   return (
-    <div className="min-h-screen bg-gray-950 flex items-center justify-center p-6">
-      <div className="bg-gray-900 rounded-2xl border border-gray-700 p-8 max-w-md text-center">
-        {icon}
-        <h2 className="text-lg font-bold text-white mb-2">{title}</h2>
-        <p className="text-sm text-gray-400">{body}</p>
-      </div>
+    <div className="p-8 max-w-2xl mx-auto text-center py-20">
+      <Bot size={40} className="mx-auto mb-3 text-gray-300" />
+      <p className="text-sm text-gray-500">No session selected.</p>
+      <p className="text-xs mt-1 text-gray-400">Navigate here from a candidate's interview card.</p>
+      <Link href="/interviews" className="mt-4 inline-block text-xs text-violet-600 hover:underline">← Back to Interviews</Link>
     </div>
+  )
+}
+
+export default function AIRoomPage() {
+  return (
+    <Suspense fallback={
+      <div className="p-8 flex items-center justify-center min-h-[400px]">
+        <div className="text-center text-gray-400">
+          <div className="w-8 h-8 border-2 border-red-600 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+          <p className="text-sm">Loading…</p>
+        </div>
+      </div>
+    }>
+      <AIRoomContent />
+    </Suspense>
   )
 }
