@@ -470,7 +470,8 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
   }
 
   function handleManualSubmit() {
-    const answer = answerBufferRef.current.trim()
+    // Accept either voice buffer OR whatever is in the textarea (currentAnswer)
+    const answer = (answerBufferRef.current || currentAnswer).trim()
     if (!answer || phaseRef.current !== 'listening') return
     answerBufferRef.current = ''; setCurrentAnswer('')
     submitAnswer(answer)
@@ -622,8 +623,9 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
 
         {/* Current question + answer area */}
         {(phase === 'listening' || phase === 'processing') && (
-          <div className="mt-5 bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
-            <div className="flex items-start gap-3 mb-4">
+          <div className="mt-5 bg-white rounded-2xl border border-gray-200 p-5 shadow-sm space-y-4">
+            {/* Question */}
+            <div className="flex items-start gap-3">
               <div className="w-7 h-7 bg-violet-100 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
                 <Bot size={14} className="text-violet-600"/>
               </div>
@@ -632,53 +634,70 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
               </p>
             </div>
 
-            <div className="flex items-start gap-3 bg-gray-50 rounded-xl p-4 min-h-16">
-              <div className="w-7 h-7 bg-gray-200 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
-                <User size={14} className="text-gray-600"/>
-              </div>
-              <div className="flex-1">
-                {liveText && <p className="text-sm text-gray-400 italic">{liveText}</p>}
-                {currentAnswer && <p className="text-sm text-gray-800">{currentAnswer}</p>}
-                {!liveText && !currentAnswer && (
-                  <p className="text-xs text-gray-400 italic">Speak your answer, then click <strong>Done Answering</strong> when finished…</p>
+            {/* Voice transcript preview */}
+            {(liveText || currentAnswer) && (
+              <div className="flex items-start gap-3 bg-violet-50 border border-violet-100 rounded-xl p-3">
+                <Mic size={13} className="text-violet-400 flex-shrink-0 mt-0.5"/>
+                <div className="flex-1">
+                  {liveText && <p className="text-xs text-violet-400 italic">{liveText}</p>}
+                  {currentAnswer && <p className="text-sm text-violet-800">{currentAnswer}</p>}
+                </div>
+                {currentAnswer && (
+                  <button onClick={() => { answerBufferRef.current = ''; setCurrentAnswer('') }}
+                    className="text-[10px] text-violet-400 hover:text-violet-600 flex-shrink-0">Clear</button>
                 )}
               </div>
+            )}
+
+            {/* Text input — always visible so candidate can type if voice fails */}
+            <div>
+              <p className="text-xs text-gray-400 mb-1.5 flex items-center gap-1">
+                <span>✏️</span> Type your answer (or speak above — both work):
+              </p>
+              <textarea
+                rows={3}
+                value={currentAnswer}
+                onChange={e => { answerBufferRef.current = e.target.value; setCurrentAnswer(e.target.value) }}
+                placeholder="Type your answer here if voice recognition isn't working well…"
+                className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-violet-400 resize-none placeholder-gray-300"
+              />
             </div>
+
+            {/* Submit */}
+            {phase === 'listening' && (
+              <button
+                onClick={handleManualSubmit}
+                disabled={!currentAnswer.trim()}
+                className={`w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold transition
+                  ${currentAnswer.trim()
+                    ? 'bg-violet-600 hover:bg-violet-700 text-white shadow-md shadow-violet-200'
+                    : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`}
+              >
+                <CheckCircle size={15}/> Submit Answer & Next Question
+              </button>
+            )}
           </div>
         )}
 
-        {/* Controls */}
+        {/* Controls bar */}
         {(phase === 'listening' || phase === 'processing' || phase === 'speaking' || phase === 'opening') && (
-          <div className="mt-4 flex items-center gap-3 flex-wrap">
-            {/* Mute toggle */}
+          <div className="mt-3 flex items-center gap-3 flex-wrap">
             <button
               onClick={() => {
                 setMicEnabled(p => !p)
                 if (micEnabled) { shouldListenRef.current = false; try { recognitionRef.current?.stop() } catch {} }
                 else startListening()
               }}
-              className={`flex items-center gap-1.5 text-sm px-4 py-2.5 rounded-lg border transition font-medium
-                ${micEnabled ? 'border-gray-300 text-gray-700 hover:bg-gray-50' : 'border-red-300 bg-red-50 text-red-600'}`}
+              className={`flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg border transition font-medium
+                ${micEnabled ? 'border-gray-200 text-gray-600 hover:bg-gray-50' : 'border-red-300 bg-red-50 text-red-600'}`}
             >
-              {micEnabled ? <Mic size={15}/> : <MicOff size={15}/>}
-              {micEnabled ? 'Mute' : 'Unmuted'}
+              {micEnabled ? <Mic size={13}/> : <MicOff size={13}/>}
+              {micEnabled ? 'Voice On' : 'Voice Off'}
             </button>
-
-            {/* Done Answering */}
-            {phase === 'listening' && (
-              <button
-                onClick={handleManualSubmit}
-                disabled={!currentAnswer}
-                className={`flex items-center gap-1.5 text-sm px-6 py-2.5 rounded-lg font-bold transition
-                  ${currentAnswer
-                    ? 'bg-violet-600 hover:bg-violet-700 text-white shadow-md shadow-violet-200 animate-pulse'
-                    : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
-              >
-                <CheckCircle size={15}/> Done Answering
-              </button>
-            )}
-
-            <span className="text-xs text-gray-400 ml-auto">AI Interview · Gemini Powered · Free</span>
+            <span className="text-xs text-gray-400">
+              🎙 Speak or ✏️ type — both are accepted
+            </span>
+            <span className="text-xs text-gray-300 ml-auto">Gemini AI · Voice + Text</span>
           </div>
         )}
 
