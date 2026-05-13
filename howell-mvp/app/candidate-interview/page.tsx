@@ -18,7 +18,7 @@ import { useEffect, useState, useRef, useCallback, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import {
   Mic, MicOff, CheckCircle, AlertCircle, Bot, User,
-  ChevronDown, ChevronUp, Circle
+  ChevronDown, ChevronUp, Circle, Square
 } from 'lucide-react'
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -55,21 +55,28 @@ function AnimatedAvatar({ state, name = 'Alex' }: { state: AvatarState; name?: s
   }, [])
 
   const stateColors: Record<AvatarState, string> = {
-    idle: 'from-violet-900 to-indigo-950',
-    speaking: 'from-violet-700 to-indigo-900',
-    listening: 'from-indigo-800 to-violet-900',
-    thinking: 'from-slate-800 to-violet-950',
+    idle: 'from-violet-900 via-indigo-900 to-slate-900',
+    speaking: 'from-violet-700 via-indigo-800 to-slate-900',
+    listening: 'from-indigo-800 via-violet-800 to-slate-900',
+    thinking: 'from-slate-800 via-violet-900 to-slate-900',
   }
 
   return (
-    <div className={`relative w-full h-full rounded-2xl bg-gradient-to-b ${stateColors[state]} flex flex-col items-center justify-center overflow-hidden transition-all duration-700`}>
-      <div className="absolute inset-0 opacity-20">
-        {[...Array(6)].map((_, i) => (
-          <div key={i} className="absolute rounded-full bg-white/10"
-            style={{ width: `${40+i*30}px`, height: `${40+i*30}px`, top: `${10+i*8}%`, left: `${5+i*12}%`, filter: 'blur(20px)' }} />
+    <div className={`relative w-full h-full bg-gradient-to-b ${stateColors[state]} flex flex-col items-center justify-center overflow-hidden transition-all duration-700`}>
+      {/* Background ambient blobs */}
+      <div className="absolute inset-0 opacity-30">
+        {[...Array(8)].map((_, i) => (
+          <div key={i} className="absolute rounded-full"
+            style={{
+              width: `${80+i*60}px`, height: `${80+i*60}px`,
+              top: `${5+i*10}%`, left: `${3+i*11}%`,
+              background: i % 2 === 0 ? 'rgba(139,92,246,0.3)' : 'rgba(99,102,241,0.2)',
+              filter: 'blur(40px)'
+            }} />
         ))}
       </div>
-      <svg width="200" height="220" viewBox="0 0 200 220" className="relative z-10 drop-shadow-2xl">
+      {/* Avatar SVG */}
+      <svg width="240" height="260" viewBox="0 0 200 220" className="relative z-10 drop-shadow-2xl">
         {/* Head */}
         <ellipse cx="100" cy="100" rx="72" ry="80" fill="#FDBCB4"/>
         {/* Hair */}
@@ -102,12 +109,22 @@ function AnimatedAvatar({ state, name = 'Alex' }: { state: AvatarState; name?: s
         <path d="M40 185 Q100 210 160 185 L170 220 H30 Z" fill="#6C3CE1"/>
         <path d="M100 185 L85 210 H115 Z" fill="#5A30C0"/>
       </svg>
-      <div className="relative z-10 mt-1">
-        <p className="text-white font-bold text-lg tracking-wide">{name}</p>
-        <p className="text-violet-300 text-xs text-center capitalize">
+      {/* Name + state label */}
+      <div className="relative z-10 mt-2 text-center">
+        <p className="text-white font-bold text-xl tracking-wide">{name}</p>
+        <p className="text-violet-300 text-sm capitalize mt-0.5">
           {state === 'speaking' ? '🔊 Speaking…' : state === 'listening' ? '🎙 Listening…' : state === 'thinking' ? '💭 Thinking…' : '⏳ Waiting'}
         </p>
       </div>
+      {/* Speaking wave animation */}
+      {state === 'speaking' && (
+        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex items-end gap-1">
+          {[4,7,10,14,10,7,4].map((h, i) => (
+            <div key={i} className="w-1.5 bg-violet-400/70 rounded-full animate-pulse"
+              style={{ height: `${h}px`, animationDelay: `${i*0.1}s` }}/>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -176,7 +193,6 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
   const [transcript,     setTranscript]    = useState<TranscriptEntry[]>([])
   const [liveText,       setLiveText]      = useState('')
   const [currentAnswer,  setCurrentAnswer] = useState('')
-  const [showTranscript, setShowTranscript]= useState(false)
   const [avatarState,    setAvatarState]   = useState<AvatarState>('idle')
   const [timeLeft,       setTimeLeft]      = useState(TIME_PER_QUESTION)
   const [browserOk,      setBrowserOk]     = useState(true)
@@ -184,6 +200,8 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
   const [errorMsg,       setErrorMsg]      = useState('')
   const [micEnabled,     setMicEnabled]    = useState(true)
   const [webcamActive,   setWebcamActive]  = useState(false)
+  const [isRecording,    setIsRecording]   = useState(false)
+  const [elapsedTime,    setElapsedTime]   = useState(0)
 
   const recognitionRef    = useRef<SpeechRecognition | null>(null)
   const webcamVideoRef    = useRef<HTMLVideoElement>(null)
@@ -192,6 +210,8 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
   const mediaStreamRef    = useRef<MediaStream | null>(null)
   const silenceTimerRef   = useRef<ReturnType<typeof setTimeout>>()
   const questionTimerRef  = useRef<ReturnType<typeof setInterval>>()
+  const elapsedTimerRef   = useRef<ReturnType<typeof setInterval>>()
+  const transcriptEndRef  = useRef<HTMLDivElement>(null)
   const answerBufferRef   = useRef('')
   const questionIndexRef  = useRef(0)
   const scoresRef         = useRef<number[]>([])
@@ -206,13 +226,17 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
 
   function setPhaseSync(p: Phase) { phaseRef.current = p; setPhase(p) }
 
+  // Auto-scroll transcript to bottom
+  useEffect(() => {
+    transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [transcript, liveText])
+
   /* ── Load session data on mount ── */
   useEffect(() => {
     const { supported, reason } = checkBrowserSupport()
     if (!supported) { setBrowserOk(false); setBrowserMsg(reason); setPhaseSync('error'); return }
 
     async function load() {
-      // Resolve sessionId → applicationId via public API
       const res  = await fetch(`/api/interviews/candidate-session?sessionId=${sessionId}`)
       const data = await res.json()
       if (!res.ok || data.error) {
@@ -227,7 +251,6 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
       appIdRef.current = data.applicationId
       sessionDbIdRef.current = data.aiSessionId || null
 
-      // Load questions
       const qRes  = await fetch(`/api/interviews/ai-interview?applicationId=${data.applicationId}${data.roundId ? `&roundId=${data.roundId}` : ''}`)
       const qData = await qRes.json()
       if (qData.error) { setErrorMsg(qData.error); setPhaseSync('error'); return }
@@ -236,28 +259,35 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
       questionsRef.current = qData.questions
       if (qData.sessionId) sessionDbIdRef.current = qData.sessionId
 
-      // Webcam + Microphone (audio needed for recording)
+      // Webcam + Microphone — fix: set muted via DOM attribute + call play()
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-        if (webcamVideoRef.current) {
-          webcamVideoRef.current.srcObject = stream
-          webcamVideoRef.current.muted = true
-          webcamVideoRef.current.onloadedmetadata = () => setWebcamActive(true)
-        }
         mediaStreamRef.current = stream
-        setWebcamActive(true)
+        if (webcamVideoRef.current) {
+          const video = webcamVideoRef.current
+          video.setAttribute('muted', '')   // ensure muted attr is set for autoplay policy
+          video.muted = true
+          video.srcObject = stream
+          video.onloadedmetadata = async () => {
+            try { await video.play() } catch { /* ignore */ }
+            setWebcamActive(true)
+          }
+        }
       } catch {
-        // Try video-only if mic permission denied
         try {
           const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
-          if (webcamVideoRef.current) {
-            webcamVideoRef.current.srcObject = stream
-            webcamVideoRef.current.muted = true
-            webcamVideoRef.current.onloadedmetadata = () => setWebcamActive(true)
-          }
           mediaStreamRef.current = stream
-          setWebcamActive(true)
-        } catch { /* camera optional — recording won't be available */ }
+          if (webcamVideoRef.current) {
+            const video = webcamVideoRef.current
+            video.setAttribute('muted', '')
+            video.muted = true
+            video.srcObject = stream
+            video.onloadedmetadata = async () => {
+              try { await video.play() } catch { /* ignore */ }
+              setWebcamActive(true)
+            }
+          }
+        } catch { /* camera optional */ }
       }
 
       speechSynthesis.getVoices()
@@ -276,7 +306,6 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
     r.onresult = (event: SpeechRecognitionEvent) => {
       let interim = '', final = ''
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        // Pick highest-confidence alternative
         let best = event.results[i][0]
         for (let j = 1; j < event.results[i].length; j++) {
           if (event.results[i][j].confidence > best.confidence) best = event.results[i][j]
@@ -301,7 +330,6 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
     if (phaseRef.current !== 'listening') return
     answerBufferRef.current += ' ' + text
     setCurrentAnswer(answerBufferRef.current.trim())
-    // No auto-submit on silence — candidate clicks "Done Answering"
   }
 
   /* ── Question timer ── */
@@ -320,6 +348,16 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
           submitAnswer(answer.split(' ').length >= 3 ? answer : '(No response — time expired)')
         }
       }
+    }, 1000)
+  }
+
+  /* ── Elapsed interview timer ── */
+  function startElapsedTimer() {
+    clearInterval(elapsedTimerRef.current)
+    let secs = 0
+    elapsedTimerRef.current = setInterval(() => {
+      secs += 1
+      setElapsedTime(secs)
     }, 1000)
   }
 
@@ -376,7 +414,6 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
     const currentQ   = questionsRef.current[questionIndexRef.current]
     const nextIndex  = questionIndexRef.current + 1
 
-    // Score this answer via AI
     try {
       const res  = await fetch('/api/interviews/ai-interview', {
         method: 'POST',
@@ -389,7 +426,6 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
       setScores([...scoresRef.current])
     } catch { scoresRef.current = [...scoresRef.current, 50]; setScores([...scoresRef.current]) }
 
-    // Advance to next question or finish
     if (nextIndex < questionsRef.current.length) {
       questionIndexRef.current = nextIndex
       setQuestionIndex(nextIndex)
@@ -402,15 +438,15 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
   }
 
   async function finishInterview() {
+    clearInterval(elapsedTimerRef.current)
     stopListening()
     setPhaseSync('speaking')
     await avatarSpeak('That concludes your interview. Thank you for your time. Your responses have been recorded and our HR team will be in touch shortly. Best of luck!')
     setAvatarState('idle')
+    setIsRecording(false)
 
-    // Stop recording and upload (runs in parallel with DB save)
     const uploadPromise = stopAndUploadRecording()
 
-    // Save results
     if (sessionDbIdRef.current && scoresRef.current.length > 0) {
       const avg = Math.round(scoresRef.current.reduce((a, b) => a + b, 0) / scoresRef.current.length)
       try {
@@ -429,7 +465,6 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
       } catch { /* log silently */ }
     }
 
-    // Wait for upload to finish before showing completion screen
     await uploadPromise
     setPhaseSync('completed')
   }
@@ -438,8 +473,9 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
     setPhaseSync('opening')
     questionIndexRef.current = 0
     setQuestionIndex(0)
-    startRecording() // begin capturing video+audio
-    await avatarSpeak(`Hello ${candidateName ? candidateName.split(' ')[0] : 'there'}! Welcome to your AI interview for the ${jobTitle} position. I'll be asking you ${questionsRef.current.length} questions. Please speak clearly and click "Done Answering" when you've finished each response. Let's begin. ${questionsRef.current[0]}`)
+    startRecording()
+    startElapsedTimer()
+    await avatarSpeak(`Hello ${candidateName ? candidateName.split(' ')[0] : 'there'}! Welcome to your AI interview for the ${jobTitle} position. I'll be asking you ${questionsRef.current.length} questions. Please speak clearly and click "Submit Answer" when you've finished each response. Let's begin. ${questionsRef.current[0]}`)
     startNewQuestion()
   }
 
@@ -463,6 +499,7 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
     mr.ondataavailable = (e) => { if (e.data.size > 0) recordingChunks.current.push(e.data) }
     mr.start(1000)
     mediaRecorderRef.current = mr
+    setIsRecording(true)
   }
 
   async function stopAndUploadRecording(): Promise<void> {
@@ -477,7 +514,7 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
           fd.append('video', blob, `interview-${sessionDbIdRef.current ?? 'unknown'}.webm`)
           if (sessionDbIdRef.current) fd.append('sessionId', sessionDbIdRef.current)
           await fetch('/api/interviews/upload-recording', { method: 'POST', body: fd })
-        } catch { /* upload failure is silent — session already saved */ }
+        } catch { /* upload failure is silent */ }
         resolve()
       }
       try { mr.stop() } catch { resolve() }
@@ -485,7 +522,6 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
   }
 
   function handleManualSubmit() {
-    // Accept either voice buffer OR whatever is in the textarea (currentAnswer)
     const answer = (answerBufferRef.current || currentAnswer).trim()
     if (!answer || phaseRef.current !== 'listening') return
     answerBufferRef.current = ''; setCurrentAnswer('')
@@ -494,179 +530,276 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
 
   const progress = questionsRef.current.length > 0 ? ((questionIndex) / questionsRef.current.length) * 100 : 0
   const timerPct = (timeLeft / TIME_PER_QUESTION) * 100
+  const elapsedStr = `${Math.floor(elapsedTime / 60).toString().padStart(2,'0')}:${(elapsedTime % 60).toString().padStart(2,'0')}`
 
-  /* ── Render ── */
+  /* ──────────────────────────────────────────────────────────
+     ERROR / LOADING / INVALID screens
+  ────────────────────────────────────────────────────────── */
   if (!browserOk) return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
-      <div className="bg-white rounded-2xl shadow-lg p-8 max-w-md text-center">
+    <div className="min-h-screen bg-gray-950 flex items-center justify-center p-6">
+      <div className="bg-gray-900 rounded-2xl border border-gray-700 p-8 max-w-md text-center">
         <AlertCircle size={40} className="text-red-500 mx-auto mb-4"/>
-        <h2 className="text-lg font-bold text-gray-900 mb-2">Browser Not Supported</h2>
-        <p className="text-sm text-gray-600">{browserMsg}</p>
+        <h2 className="text-lg font-bold text-white mb-2">Browser Not Supported</h2>
+        <p className="text-sm text-gray-400">{browserMsg}</p>
       </div>
     </div>
   )
 
   if (phase === 'invalid') return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
-      <div className="bg-white rounded-2xl shadow-lg p-8 max-w-md text-center">
+    <div className="min-h-screen bg-gray-950 flex items-center justify-center p-6">
+      <div className="bg-gray-900 rounded-2xl border border-gray-700 p-8 max-w-md text-center">
         <AlertCircle size={40} className="text-amber-500 mx-auto mb-4"/>
-        <h2 className="text-lg font-bold text-gray-900 mb-2">Invalid Interview Link</h2>
-        <p className="text-sm text-gray-600">{errorMsg || 'This interview link is invalid or has already been used. Please contact the HR team.'}</p>
+        <h2 className="text-lg font-bold text-white mb-2">Invalid Interview Link</h2>
+        <p className="text-sm text-gray-400">{errorMsg || 'This interview link is invalid or has already been used.'}</p>
       </div>
     </div>
   )
 
   if (phase === 'loading') return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+    <div className="min-h-screen bg-gray-950 flex items-center justify-center">
       <div className="text-center">
         <div className="w-10 h-10 border-4 border-violet-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"/>
-        <p className="text-sm text-gray-500">Loading your interview…</p>
+        <p className="text-sm text-gray-400">Loading your interview…</p>
       </div>
     </div>
   )
 
   if (phase === 'completed') return (
-    <div className="min-h-screen bg-gradient-to-br from-violet-50 to-indigo-50 flex items-center justify-center p-6">
-      <div className="bg-white rounded-2xl shadow-xl p-10 max-w-md text-center">
-        <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-          <CheckCircle size={32} className="text-green-600"/>
+    <div className="min-h-screen bg-gray-950 flex items-center justify-center p-6">
+      <div className="bg-gray-900 rounded-2xl border border-gray-700 p-10 max-w-md text-center">
+        <div className="w-16 h-16 bg-green-900/50 rounded-full flex items-center justify-center mx-auto mb-4 border border-green-700">
+          <CheckCircle size={32} className="text-green-400"/>
         </div>
-        <h2 className="text-2xl font-bold text-gray-900 mb-2">Interview Complete!</h2>
-        <p className="text-gray-500 text-sm mb-6">Thank you for completing your AI interview for the <strong>{jobTitle}</strong> position. Your responses have been recorded and the HR team will review them shortly.</p>
-        <div className="bg-violet-50 border border-violet-200 rounded-xl p-4 text-left space-y-1.5">
-          <p className="text-xs font-semibold text-violet-800">What happens next?</p>
-          <p className="text-xs text-violet-700">✓ Your answers have been saved</p>
-          <p className="text-xs text-violet-700">✓ HR will review your interview results</p>
-          <p className="text-xs text-violet-700">✓ You'll be contacted within 2–3 business days</p>
+        <h2 className="text-2xl font-bold text-white mb-2">Interview Complete!</h2>
+        <p className="text-gray-400 text-sm mb-6">Thank you for completing your AI interview for the <strong className="text-white">{jobTitle}</strong> position. The HR team will review your responses shortly.</p>
+        <div className="bg-violet-900/30 border border-violet-700 rounded-xl p-4 text-left space-y-2">
+          <p className="text-xs font-semibold text-violet-300">What happens next?</p>
+          <p className="text-xs text-violet-400">✓ Your answers have been saved</p>
+          <p className="text-xs text-violet-400">✓ HR will review your interview results</p>
+          <p className="text-xs text-violet-400">✓ You'll be contacted within 2–3 business days</p>
         </div>
-        <p className="text-xs text-gray-400 mt-6">You may now close this tab.</p>
+        <p className="text-xs text-gray-600 mt-6">You may now close this tab.</p>
       </div>
     </div>
   )
 
+  /* ──────────────────────────────────────────────────────────
+     MAIN INTERVIEW UI — matches reference design
+  ────────────────────────────────────────────────────────── */
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-3">
+    <div className="h-screen bg-gray-950 flex flex-col overflow-hidden" style={{ fontFamily: 'system-ui, sans-serif' }}>
+
+      {/* ── Top Bar ── */}
+      <div className="flex items-center justify-between px-5 py-2.5 bg-gray-950/80 backdrop-blur-sm border-b border-gray-800 flex-shrink-0 z-30">
+        {/* Left: Branding */}
+        <div className="flex items-center gap-2.5">
           <div className="w-8 h-8 bg-violet-600 rounded-lg flex items-center justify-center">
             <Bot size={16} className="text-white"/>
           </div>
           <div>
-            <p className="text-sm font-bold text-gray-900">AI Interview — {jobTitle}</p>
-            <p className="text-xs text-gray-500">Powered by Gemini AI · Voice-based interview</p>
+            <p className="text-white text-sm font-bold leading-tight">Interview | {jobTitle || 'Loading…'}</p>
+            <p className="text-gray-500 text-[10px]">Powered by Gemini AI · Voice-based</p>
           </div>
         </div>
-        {phase === 'listening' || phase === 'processing' || phase === 'speaking' ? (
-          <span className="flex items-center gap-1.5 text-xs font-medium text-green-700 bg-green-50 border border-green-200 px-2.5 py-1 rounded-full">
-            <Circle size={8} className="fill-green-500 text-green-500 animate-pulse"/> In Progress
-          </span>
-        ) : null}
-      </div>
 
-      <div className="max-w-5xl mx-auto p-6">
-        {/* Progress */}
-        {(phase !== 'ready') && (
-          <div className="mb-4 bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-4">
-            <div className="flex-1">
-              <div className="flex items-center justify-between mb-1.5">
-                <span className="text-xs font-medium text-gray-600">Progress</span>
-                <span className="text-xs font-bold text-violet-700">Q{questionIndex + 1} / {questionsRef.current.length}</span>
-              </div>
-              <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                <div className="h-full bg-violet-600 rounded-full transition-all duration-500" style={{ width: `${progress}%` }}/>
-              </div>
-              <p className="text-xs text-gray-400 mt-1">{TIME_PER_QUESTION / 60} min per question</p>
-            </div>
-            {(phase === 'listening') && (
-              <div className="flex flex-col items-center gap-1 flex-shrink-0">
-                <svg width="44" height="44" viewBox="0 0 44 44">
-                  <circle cx="22" cy="22" r="18" fill="none" stroke="#e5e7eb" strokeWidth="4"/>
-                  <circle cx="22" cy="22" r="18" fill="none" stroke={timeLeft < 30 ? '#ef4444' : '#7c3aed'}
-                    strokeWidth="4" strokeLinecap="round"
-                    strokeDasharray={`${2*Math.PI*18}`}
-                    strokeDashoffset={`${2*Math.PI*18*(1-timerPct/100)}`}
-                    transform="rotate(-90 22 22)" className="transition-all duration-1000"/>
-                  <text x="22" y="27" textAnchor="middle" fontSize="11" fontWeight="bold"
-                    fill={timeLeft < 30 ? '#ef4444' : '#7c3aed'}>{timeLeft}</text>
-                </svg>
-                <span className="text-[10px] text-gray-400">LEFT</span>
-              </div>
-            )}
+        {/* Center: elapsed timer */}
+        {(phase !== 'ready' && phase !== 'loading') && (
+          <div className="absolute left-1/2 -translate-x-1/2">
+            <span className="text-white text-sm font-mono bg-black/60 border border-gray-700 px-4 py-1 rounded-full">
+              Interview Time {elapsedStr}
+            </span>
           </div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          {/* Avatar panel */}
-          <div className="h-72 md:h-96">
+        {/* Right: Submit button */}
+        <div className="flex items-center gap-3">
+          {phase === 'listening' && (
+            <button
+              onClick={handleManualSubmit}
+              disabled={!currentAnswer.trim()}
+              className={`text-sm px-5 py-1.5 rounded-lg font-semibold transition ${
+                currentAnswer.trim()
+                  ? 'bg-violet-600 hover:bg-violet-700 text-white'
+                  : 'bg-gray-700 text-gray-500 cursor-not-allowed'
+              }`}
+            >
+              Submit
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* ── Content Area ── */}
+      <div className="flex flex-1 overflow-hidden">
+
+        {/* ── Left: AI Avatar + PIP + overlays ── */}
+        <div className="relative flex-1 overflow-hidden">
+
+          {/* Full-screen AI avatar background */}
+          <div className="absolute inset-0">
             <AnimatedAvatar state={avatarState} name="Alex"/>
           </div>
 
-          {/* Candidate webcam */}
-          <div className="h-72 md:h-96 bg-gray-900 rounded-2xl overflow-hidden relative flex items-center justify-center">
-            <video ref={webcamVideoRef} autoPlay muted playsInline
-              className={`w-full h-full object-cover transition-opacity duration-500 ${webcamActive ? 'opacity-100' : 'opacity-0'}`}/>
-            {!webcamActive && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                <User size={40} className="text-gray-600 mb-2"/>
-                <p className="text-gray-500 text-sm">{candidateName || 'You'}</p>
-                <p className="text-xs text-gray-600 mt-1">Camera loading…</p>
+          {/* Progress bar overlay at top of avatar */}
+          {phase !== 'ready' && (
+            <div className="absolute top-0 left-0 right-0 h-0.5 bg-gray-800 z-10">
+              <div className="h-full bg-violet-500 transition-all duration-500" style={{ width: `${progress}%` }}/>
+            </div>
+          )}
+
+          {/* Question counter badge */}
+          {(phase === 'listening' || phase === 'processing' || phase === 'speaking' || phase === 'opening') && (
+            <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
+              <span className="bg-black/60 border border-gray-600 text-white text-xs font-medium px-3 py-1 rounded-full">
+                Q{questionIndex + 1} / {questionsRef.current.length}
+              </span>
+            </div>
+          )}
+
+          {/* Candidate webcam PIP — top left */}
+          <div className="absolute top-4 left-4 z-10" style={{ width: '200px', height: '150px' }}>
+            <div className="relative w-full h-full rounded-xl overflow-hidden shadow-2xl border-2 border-gray-600 bg-gray-900">
+              <video
+                ref={webcamVideoRef}
+                autoPlay
+                playsInline
+                className={`w-full h-full object-cover transition-opacity duration-500 ${webcamActive ? 'opacity-100' : 'opacity-0'}`}
+              />
+              {!webcamActive && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900">
+                  <User size={28} className="text-gray-600 mb-1"/>
+                  <p className="text-gray-500 text-xs">{candidateName || 'You'}</p>
+                  <p className="text-gray-600 text-[10px] mt-0.5">Camera loading…</p>
+                </div>
+              )}
+              {/* Name label */}
+              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-2 py-1.5">
+                <p className="text-white text-[10px] font-medium truncate">{candidateName} {jobTitle && `· ${jobTitle}`}</p>
               </div>
-            )}
-            {webcamActive && (
-              <div className="absolute bottom-3 left-3 bg-black/50 text-white text-xs px-2 py-1 rounded-full pointer-events-none">
-                {candidateName || 'You'}
-              </div>
-            )}
-            <div className="absolute top-3 left-3 flex items-center gap-1.5 bg-black/50 text-white text-xs px-2 py-1 rounded-full">
-              <Circle size={6} className={webcamActive ? "fill-red-500 text-red-500 animate-pulse" : "fill-gray-500 text-gray-500"}/>
-              {webcamActive ? 'REC' : 'NO CAM'}
             </div>
           </div>
+
+          {/* Recording indicator — bottom center */}
+          {isRecording && (
+            <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 bg-black/70 border border-gray-700 rounded-full px-5 py-2">
+              <Circle size={8} className="fill-red-500 text-red-500 animate-pulse"/>
+              <span className="text-white text-xs font-medium tracking-wide">Recording...</span>
+              <div className="w-4 h-4 bg-red-600 rounded flex items-center justify-center ml-1 cursor-pointer"
+                   onClick={() => { /* stop not exposed to user mid-interview */ }}>
+                <Square size={8} className="text-white fill-white"/>
+              </div>
+            </div>
+          )}
+
+          {/* Per-question countdown ring — bottom right */}
+          {phase === 'listening' && (
+            <div className="absolute bottom-5 right-5 z-10 flex flex-col items-center gap-1">
+              <svg width="52" height="52" viewBox="0 0 52 52">
+                <circle cx="26" cy="26" r="22" fill="rgba(0,0,0,0.5)" stroke="#374151" strokeWidth="4"/>
+                <circle cx="26" cy="26" r="22" fill="none"
+                  stroke={timeLeft < 30 ? '#ef4444' : '#7c3aed'}
+                  strokeWidth="4" strokeLinecap="round"
+                  strokeDasharray={`${2*Math.PI*22}`}
+                  strokeDashoffset={`${2*Math.PI*22*(1-timerPct/100)}`}
+                  transform="rotate(-90 26 26)" className="transition-all duration-1000"/>
+                <text x="26" y="31" textAnchor="middle" fontSize="12" fontWeight="bold"
+                  fill={timeLeft < 30 ? '#ef4444' : '#a78bfa'}>{timeLeft}</text>
+              </svg>
+              <span className="text-[9px] text-gray-500 font-medium">SEC LEFT</span>
+            </div>
+          )}
+
+          {/* ── READY SCREEN overlay ── */}
+          {phase === 'ready' && (
+            <div className="absolute inset-0 bg-black/70 flex items-center justify-center z-20">
+              <div className="bg-gray-900/90 backdrop-blur-md rounded-2xl p-8 max-w-sm w-full mx-4 text-center border border-gray-700 shadow-2xl">
+                <div className="w-14 h-14 bg-violet-900/50 border border-violet-700 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Bot size={28} className="text-violet-400"/>
+                </div>
+                <h2 className="text-xl font-bold text-white mb-2">Ready for your Interview?</h2>
+                <p className="text-sm text-gray-400 mb-1">
+                  <strong className="text-white">{questionsRef.current.length} questions</strong> for the <strong className="text-white">{jobTitle}</strong> role.
+                </p>
+                <p className="text-sm text-gray-500 mb-6">Speak clearly · 2 min per question · Click Submit when done</p>
+                <div className="flex items-center justify-center gap-4 mb-6 flex-wrap">
+                  <span className="text-xs text-gray-500 flex items-center gap-1">✅ Voice interview</span>
+                  <span className="text-xs text-gray-500 flex items-center gap-1">✅ Auto-saved</span>
+                  <span className="text-xs text-gray-500 flex items-center gap-1">✅ Video recorded</span>
+                </div>
+                <button onClick={startInterview}
+                  className="w-full bg-violet-600 hover:bg-violet-700 text-white font-bold px-8 py-3 rounded-xl text-sm transition shadow-lg">
+                  Start Interview →
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Ready to start */}
-        {phase === 'ready' && (
-          <div className="mt-5 bg-white rounded-2xl border border-gray-200 p-8 text-center shadow-sm">
-            <div className="w-14 h-14 bg-violet-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <Bot size={28} className="text-violet-600"/>
-            </div>
-            <h2 className="text-xl font-bold text-gray-900 mb-2">Ready for your AI Interview?</h2>
-            <p className="text-sm text-gray-500 mb-1">You'll be asked <strong>{questionsRef.current.length} questions</strong> for the <strong>{jobTitle}</strong> role.</p>
-            <p className="text-sm text-gray-500 mb-6">Speak your answers clearly. Click <strong>"Done Answering"</strong> after each response.</p>
-            <div className="flex items-center justify-center gap-4 mb-6 flex-wrap text-xs text-gray-500">
-              <span className="flex items-center gap-1">✅ Voice-based interview</span>
-              <span className="flex items-center gap-1">✅ 2 minutes per question</span>
-              <span className="flex items-center gap-1">✅ Answers auto-saved</span>
-            </div>
-            <button onClick={startInterview}
-              className="bg-violet-600 hover:bg-violet-700 text-white font-bold px-8 py-3 rounded-xl text-sm transition shadow-lg shadow-violet-200">
-              Start Interview →
-            </button>
+        {/* ── Right Panel: Live Transcript + Answer area ── */}
+        <div className="w-72 xl:w-80 bg-gray-900 border-l border-gray-800 flex flex-col flex-shrink-0">
+          {/* Panel header */}
+          <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between flex-shrink-0">
+            <p className="text-white font-semibold text-sm">Live Transcript</p>
+            {(phase === 'listening' || phase === 'speaking') && (
+              <span className="flex items-center gap-1.5 text-[10px] text-green-400 bg-green-900/30 border border-green-800 px-2 py-0.5 rounded-full">
+                <Circle size={6} className="fill-green-400 text-green-400 animate-pulse"/> Live
+              </span>
+            )}
           </div>
-        )}
 
-        {/* Current question + answer area */}
-        {(phase === 'listening' || phase === 'processing') && (
-          <div className="mt-5 bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-            {/* Question */}
-            <div className="flex items-start gap-3 bg-violet-50 border-b border-violet-100 p-4">
-              <div className="w-7 h-7 bg-violet-600 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
-                <Bot size={13} className="text-white"/>
+          {/* Transcript messages */}
+          <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
+            {transcript.length === 0 && (
+              <div className="text-center text-gray-600 text-xs mt-8">
+                <Bot size={24} className="mx-auto mb-2 opacity-40"/>
+                Transcript will appear here once the interview starts
               </div>
-              <p className="text-sm font-semibold text-violet-900">
-                Q{questionIndex + 1}: {questionsRef.current[questionIndex]}
-              </p>
-            </div>
+            )}
+            {transcript.map((t, i) => (
+              <div key={i} className={`flex gap-2 ${t.role === 'candidate' ? 'justify-end' : 'justify-start'}`}>
+                {t.role === 'interviewer' && (
+                  <div className="w-5 h-5 rounded-full flex-shrink-0 bg-violet-800 flex items-center justify-center mt-0.5">
+                    <Bot size={10} className="text-violet-300"/>
+                  </div>
+                )}
+                <div className={`max-w-[85%] text-xs rounded-xl px-3 py-2 leading-relaxed ${
+                  t.role === 'interviewer'
+                    ? 'bg-gray-800 text-gray-200 rounded-tl-none'
+                    : 'bg-violet-700/50 text-violet-100 rounded-tr-none'
+                }`}>
+                  {t.text}
+                </div>
+                {t.role === 'candidate' && (
+                  <div className="w-5 h-5 rounded-full flex-shrink-0 bg-gray-700 flex items-center justify-center mt-0.5">
+                    <User size={10} className="text-gray-300"/>
+                  </div>
+                )}
+              </div>
+            ))}
+            {/* Live interim text bubble */}
+            {liveText && (
+              <div className="flex gap-2 justify-end">
+                <div className="max-w-[85%] text-xs rounded-xl px-3 py-2 bg-violet-900/30 text-violet-300 italic border border-dashed border-violet-700/50 rounded-tr-none">
+                  {liveText}
+                </div>
+                <div className="w-5 h-5 rounded-full flex-shrink-0 bg-gray-700 flex items-center justify-center mt-0.5">
+                  <User size={10} className="text-gray-300"/>
+                </div>
+              </div>
+            )}
+            <div ref={transcriptEndRef}/>
+          </div>
 
-            <div className="p-5 space-y-4">
-              {/* Mic status indicator */}
+          {/* Answer / Mic control area */}
+          {phase === 'listening' && (
+            <div className="border-t border-gray-800 p-3 space-y-2 flex-shrink-0">
+              {/* Mic status */}
               <div className="flex items-center gap-2">
-                <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
+                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
                   liveText ? 'bg-red-500 animate-pulse' : currentAnswer ? 'bg-green-500' : 'bg-violet-400 animate-pulse'
                 }`}/>
-                <span className="text-xs text-gray-500 font-medium">
-                  {liveText ? 'Listening…' : currentAnswer ? 'Response captured — speak more or submit' : 'Speak your answer clearly'}
+                <span className="text-[10px] text-gray-400 flex-1 min-w-0 truncate">
+                  {liveText ? 'Listening…' : currentAnswer ? 'Ready to submit' : 'Speak your answer'}
                 </span>
                 <button
                   onClick={() => {
@@ -674,111 +807,74 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
                     if (micEnabled) { shouldListenRef.current = false; try { recognitionRef.current?.stop() } catch {} }
                     else startListening()
                   }}
-                  className={`ml-auto flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border transition
-                    ${micEnabled ? 'border-gray-200 text-gray-500' : 'border-red-300 bg-red-50 text-red-600'}`}
+                  className={`flex items-center gap-1 text-[10px] px-2 py-1 rounded-lg border transition flex-shrink-0
+                    ${micEnabled ? 'border-gray-700 text-gray-400' : 'border-red-800 bg-red-900/30 text-red-400'}`}
                 >
-                  {micEnabled ? <Mic size={11}/> : <MicOff size={11}/>}
-                  {micEnabled ? 'Mic On' : 'Mic Off'}
+                  {micEnabled ? <Mic size={10}/> : <MicOff size={10}/>}
+                  {micEnabled ? 'On' : 'Off'}
                 </button>
               </div>
 
-              {/* Live interim text */}
-              {liveText && (
-                <div className="bg-gray-50 rounded-xl px-4 py-3 text-sm text-gray-400 italic border border-dashed border-gray-200 min-h-[40px]">
-                  {liveText}
-                </div>
-              )}
-
-              {/* Captured answer — read only, clean display */}
+              {/* Captured answer preview */}
               {currentAnswer && !liveText && (
-                <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-3">
-                  <p className="text-xs font-semibold text-green-700 mb-1.5 flex items-center gap-1">
-                    <CheckCircle size={11}/> Response captured
-                  </p>
-                  <p className="text-sm text-gray-800 leading-relaxed">{currentAnswer}</p>
+                <div className="bg-gray-800/50 border border-gray-700 rounded-lg px-3 py-2 max-h-20 overflow-y-auto">
+                  <p className="text-[10px] font-medium text-gray-400 mb-1">Your answer:</p>
+                  <p className="text-xs text-gray-300 leading-relaxed">{currentAnswer}</p>
                 </div>
               )}
 
-              {/* Empty state */}
-              {!currentAnswer && !liveText && (
-                <div className="bg-gray-50 rounded-xl px-4 py-6 text-center border border-dashed border-gray-200">
-                  <Mic size={20} className="text-violet-300 mx-auto mb-2"/>
-                  <p className="text-xs text-gray-400">Start speaking — your answer will appear here</p>
-                </div>
-              )}
-
-              {/* Action buttons */}
-              {phase === 'listening' && (
-                <div className="flex gap-3">
-                  {currentAnswer && (
-                    <button
-                      onClick={() => { answerBufferRef.current = ''; setCurrentAnswer(''); setLiveText(''); startListening() }}
-                      className="flex items-center gap-1.5 text-sm px-4 py-2.5 rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 transition font-medium"
-                    >
-                      <Mic size={13}/> Speak Again
-                    </button>
-                  )}
+              {/* Buttons */}
+              <div className="flex gap-2">
+                {currentAnswer && (
                   <button
-                    onClick={handleManualSubmit}
-                    disabled={!currentAnswer.trim()}
-                    className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold transition
-                      ${currentAnswer.trim()
-                        ? 'bg-violet-600 hover:bg-violet-700 text-white shadow-md shadow-violet-200'
-                        : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`}
+                    onClick={() => { answerBufferRef.current = ''; setCurrentAnswer(''); setLiveText(''); startListening() }}
+                    className="flex items-center gap-1 text-xs px-3 py-2 rounded-lg border border-gray-700 text-gray-400 hover:bg-gray-800 transition"
                   >
-                    <CheckCircle size={14}/> Submit Answer →
+                    <Mic size={11}/> Again
                   </button>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Transcript */}
-        {transcript.length > 0 && (
-          <div className="mt-4 bg-white rounded-xl border border-gray-200 overflow-hidden">
-            <button onClick={() => setShowTranscript(p => !p)}
-              className="w-full flex items-center justify-between px-5 py-3 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">
-              <span>Transcript ({transcript.length} entries)</span>
-              {showTranscript ? <ChevronUp size={15}/> : <ChevronDown size={15}/>}
-            </button>
-            {showTranscript && (
-              <div className="px-5 pb-4 space-y-3 border-t border-gray-100 pt-3 max-h-64 overflow-y-auto">
-                {transcript.map((t, i) => (
-                  <div key={i} className={`flex gap-2 ${t.role === 'interviewer' ? '' : 'flex-row-reverse'}`}>
-                    <div className={`w-6 h-6 rounded-full flex-shrink-0 flex items-center justify-center text-[10px] font-bold
-                      ${t.role === 'interviewer' ? 'bg-violet-100 text-violet-700' : 'bg-gray-100 text-gray-600'}`}>
-                      {t.role === 'interviewer' ? 'AI' : 'You'}
-                    </div>
-                    <div className={`max-w-xs text-xs rounded-lg px-3 py-2
-                      ${t.role === 'interviewer' ? 'bg-violet-50 text-violet-800' : 'bg-gray-100 text-gray-700'}`}>
-                      {t.text}
-                    </div>
-                  </div>
-                ))}
+                )}
+                <button
+                  onClick={handleManualSubmit}
+                  disabled={!currentAnswer.trim()}
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition ${
+                    currentAnswer.trim()
+                      ? 'bg-violet-600 hover:bg-violet-700 text-white'
+                      : 'bg-gray-800 text-gray-600 cursor-not-allowed'
+                  }`}
+                >
+                  <CheckCircle size={12}/> Submit Answer
+                </button>
               </div>
-            )}
-          </div>
-        )}
+            </div>
+          )}
+
+          {/* Processing indicator */}
+          {phase === 'processing' && (
+            <div className="border-t border-gray-800 p-4 flex items-center gap-2 flex-shrink-0">
+              <div className="w-4 h-4 border-2 border-violet-500 border-t-transparent rounded-full animate-spin flex-shrink-0"/>
+              <span className="text-xs text-gray-400">AI is evaluating your answer…</span>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   Page wrapper — reads sessionId from URL
+   Page wrapper
 ───────────────────────────────────────────────────────────────────────────── */
 function CandidateInterviewPageInner() {
   const params    = useSearchParams()
   const sessionId = params.get('sessionId')
 
   if (!sessionId) return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
-      <div className="bg-white rounded-2xl shadow-lg p-8 max-w-md text-center">
+    <div className="min-h-screen bg-gray-950 flex items-center justify-center p-6">
+      <div className="bg-gray-900 rounded-2xl border border-gray-700 p-8 max-w-md text-center">
         <AlertCircle size={40} className="text-amber-500 mx-auto mb-4"/>
-        <h2 className="text-lg font-bold text-gray-900 mb-2">Missing Interview Link</h2>
-        <p className="text-sm text-gray-600">Please use the full interview link sent to you by HR. It should look like:<br/>
-          <code className="text-xs bg-gray-100 px-2 py-1 rounded mt-2 inline-block">…/candidate-interview?sessionId=…</code>
+        <h2 className="text-lg font-bold text-white mb-2">Missing Interview Link</h2>
+        <p className="text-sm text-gray-400">Please use the full interview link sent to you by HR. It should look like:<br/>
+          <code className="text-xs bg-gray-800 px-2 py-1 rounded mt-2 inline-block text-gray-300">…/candidate-interview?sessionId=…</code>
         </p>
       </div>
     </div>
@@ -790,7 +886,7 @@ function CandidateInterviewPageInner() {
 export default function CandidateInterviewPage() {
   return (
     <Suspense fallback={
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
         <div className="w-10 h-10 border-4 border-violet-600 border-t-transparent rounded-full animate-spin"/>
       </div>
     }>
