@@ -1,10 +1,12 @@
 'use client'
-import { useEffect, useState, useCallback } from 'react'
+export const dynamic = 'force-dynamic'
+
+import { useEffect, useState, useCallback, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import {
   Bot, Users, Plus, Trash2, Save, ChevronDown, ChevronUp,
   Settings, Zap, Clock, Target, Shield, HelpCircle, CheckCircle,
-  AlertCircle, GripVertical, Video, X, AlertTriangle, ArrowLeft
+  AlertCircle, GripVertical, X, AlertTriangle, ArrowLeft
 } from 'lucide-react'
 import Link from 'next/link'
 
@@ -55,7 +57,7 @@ const DEFAULT_AI_QUESTIONS = [
   'Where do you see yourself in the next 2-3 years?',
 ]
 
-export default function InterviewConfigPage() {
+function InterviewConfigInner() {
   const searchParams = useSearchParams()
   const preselectedJobId = searchParams.get('jobId')
 
@@ -561,6 +563,14 @@ export default function InterviewConfigPage() {
   )
 }
 
+export default function InterviewConfigPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-gray-400 text-sm">Loading…</div>}>
+      <InterviewConfigInner />
+    </Suspense>
+  )
+}
+
 /* ── Round Card ─────────────────────────────────────────────────────────────── */
 function RoundCard({
   round, idx, expanded, onToggle, onUpdate, onRemove,
@@ -598,7 +608,7 @@ function RoundCard({
             <span className={`text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 ${
               isAI ? 'bg-violet-100 text-violet-700' : 'bg-gray-100 text-gray-600'
             }`}>
-              {isAI ? '🤖 AI' : round.type === 'panel' ? '👥 Panel' : '👤 Manual'}
+              {isAI ? '🤖 AI Interview' : round.type === 'panel' ? '👥 Panel' : '👤 Manual'}
             </span>
             {round.auto_schedule && (
               <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium flex-shrink-0">
@@ -643,7 +653,7 @@ function RoundCard({
                 value={round.type}
                 onChange={e => onUpdate('type', e.target.value)}
               >
-                <option value="ai">🤖 AI (Tavus)</option>
+                <option value="ai">🤖 AI Interview</option>
                 <option value="manual">👤 Manual</option>
                 <option value="panel">👥 Panel</option>
               </select>
@@ -721,24 +731,22 @@ function RoundCard({
           {/* AI-specific settings */}
           {isAI && (
             <div className="border border-violet-100 bg-violet-50 rounded-xl p-4 space-y-4">
-              <h3 className="text-xs font-semibold text-violet-700 uppercase tracking-wide flex items-center gap-1.5">
-                <Video size={12} /> Tavus AI Settings
-              </h3>
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-semibold text-violet-700 uppercase tracking-wide flex items-center gap-1.5">
+                  <Bot size={12} /> AI Interview Settings
+                </h3>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] bg-violet-100 border border-violet-200 text-violet-700 px-2 py-0.5 rounded-full font-medium">Gemini 1.5 Flash</span>
+                  <span className="text-[10px] bg-green-100 border border-green-200 text-green-700 px-2 py-0.5 rounded-full font-medium">Free · No Avatar Setup</span>
+                </div>
+              </div>
 
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">
-                  Tavus Persona / Replica ID
-                </label>
-                <input
-                  type="text"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-violet-500 font-mono"
-                  placeholder="e.g. p5317866ba7 or r3a4c5e6..."
-                  value={round.tavus_persona_id}
-                  onChange={e => onUpdate('tavus_persona_id', e.target.value)}
-                />
-                <p className="text-xs text-gray-400 mt-1">
-                  Find this in your <a href="https://platform.tavus.io" target="_blank" rel="noopener noreferrer" className="text-violet-600 hover:underline">Tavus dashboard</a> under Personas or Replicas.
-                </p>
+              <div className="bg-white border border-violet-200 rounded-lg px-4 py-3 text-xs text-violet-700 space-y-1">
+                <p className="font-semibold">How this round works:</p>
+                <p>🤖 AI interviewer powered by <strong>Google Gemini 1.5 Flash</strong></p>
+                <p>🎙️ Candidate speaks — browser Speech Recognition transcribes in real time</p>
+                <p>🔊 AI responds using browser Text-to-Speech (no external TTS API needed)</p>
+                <p>📊 Answers are scored and saved automatically at the end</p>
               </div>
 
               {/* AI Auto-Generate Questions Toggle */}
