@@ -4,7 +4,7 @@ import {
   Calendar, Clock, Video, Users, Star, Bot, CheckCircle, XCircle,
   Zap, Settings, ExternalLink, RefreshCw, ChevronRight, AlertCircle,
   Trophy, ThumbsUp, ThumbsDown, Minus, MessageSquare, Sparkles,
-  Loader2, Phone, X, Copy, Send,
+  Loader2, Phone, X,
 } from 'lucide-react'
 import { formatDateTime } from '@/lib/utils'
 import type { Interview } from '@/types'
@@ -29,7 +29,6 @@ interface AISession {
   id: string
   status: string
   tavus_conversation_url: string | null
-  recording_url: string | null
   ai_score: number | null
   recommendation: string | null
   scheduled_at: string | null
@@ -260,59 +259,42 @@ function InlineSchedulerModal({ application, onClose, onScheduled }: {
 }) {
   const candidate = application.candidate
   const job       = application.job
-  const today     = new Date().toISOString().split('T')[0]
+  const tomorrow  = new Date(Date.now() + 86400000).toISOString().split('T')[0]
 
   const [form, setForm] = useState({
-    date:         today,
+    date:         tomorrow,
     time:         '10:00',
     duration:     60,
     type:         'video' as 'video' | 'in_person' | 'phone',
     meeting_link: 'https://meet.google.com/new',
     notes:        '',
   })
-  const [saving,  setSaving]  = useState(false)
-  const [error,   setError]   = useState<string | null>(null)
-  const [success, setSuccess] = useState(false)
+  const [saving, setSaving] = useState(false)
 
   function set(k: string, v: any) { setForm(f => ({ ...f, [k]: v })) }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setSaving(true)
-    setError(null)
-    try {
-      const scheduled_at = new Date(`${form.date}T${form.time}:00`).toISOString()
-      const res = await fetch('/api/interviews', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          application_id:   application.id,
-          scheduled_at,
-          duration_minutes: form.duration,
-          interview_type:   form.type,
-          meeting_link:     form.type === 'video' ? form.meeting_link : null,
-          notes:            form.notes,
-          candidate_name:   candidate?.full_name,
-          candidate_email:  candidate?.email,
-          candidate_phone:  candidate?.phone || null,
-          job_title:        job?.title,
-        }),
-      })
-      const data = await res.json()
-      if (!res.ok || data?.error) {
-        setError(data?.error || `Server error ${res.status} — check Supabase interviews table schema`)
-        setSaving(false)
-        return
-      }
-      // Success
-      setSuccess(true)
-      setTimeout(() => {
-        onScheduled()
-      }, 800)
-    } catch (err: any) {
-      setError(err.message || 'Network error')
-      setSaving(false)
-    }
+    const scheduled_at = new Date(`${form.date}T${form.time}:00`).toISOString()
+    await fetch('/api/interviews', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        application_id:   application.id,
+        scheduled_at,
+        duration_minutes: form.duration,
+        interview_type:   form.type,
+        meeting_link:     form.type === 'video' ? form.meeting_link : null,
+        notes:            form.notes,
+        candidate_name:   candidate?.full_name,
+        candidate_email:  candidate?.email,
+        candidate_phone:  candidate?.phone,
+        job_title:        job?.title,
+      }),
+    })
+    setSaving(false)
+    onScheduled()
   }
 
   return (
@@ -352,7 +334,7 @@ function InlineSchedulerModal({ application, onClose, onScheduled }: {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold text-gray-600 mb-1">Date</label>
-              <input type="date" value={form.date} min={today}
+              <input type="date" value={form.date} min={tomorrow}
                 onChange={e => set('date', e.target.value)} required
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-red-400"/>
             </div>
@@ -392,29 +374,16 @@ function InlineSchedulerModal({ application, onClose, onScheduled }: {
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-red-400 resize-none"/>
           </div>
 
-          {error && (
-            <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-xs text-red-700 flex items-start gap-2">
-              <AlertCircle size={13} className="flex-shrink-0 mt-0.5"/>
-              <span>{error}</span>
-            </div>
-          )}
-
-          {success ? (
-            <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-3 text-sm text-green-700 flex items-center gap-2 font-semibold">
-              <CheckCircle size={16}/> Interview scheduled successfully!
-            </div>
-          ) : (
-            <div className="flex gap-3 pt-1">
-              <button type="button" onClick={onClose}
-                className="flex-1 border border-gray-200 text-gray-600 py-2.5 rounded-xl text-sm font-medium hover:bg-gray-50 transition">
-                Cancel
-              </button>
-              <button type="submit" disabled={saving}
-                className="flex-1 bg-red-700 hover:bg-red-800 text-white py-2.5 rounded-xl text-sm font-semibold transition disabled:opacity-60 flex items-center justify-center gap-2">
-                {saving ? <><Loader2 size={14} className="animate-spin"/> Saving…</> : <><Calendar size={14}/> Schedule & Notify</>}
-              </button>
-            </div>
-          )}
+          <div className="flex gap-3 pt-1">
+            <button type="button" onClick={onClose}
+              className="flex-1 border border-gray-200 text-gray-600 py-2.5 rounded-xl text-sm font-medium hover:bg-gray-50 transition">
+              Cancel
+            </button>
+            <button type="submit" disabled={saving}
+              className="flex-1 bg-red-700 hover:bg-red-800 text-white py-2.5 rounded-xl text-sm font-semibold transition disabled:opacity-60 flex items-center justify-center gap-2">
+              {saving ? <><Loader2 size={14} className="animate-spin"/> Saving…</> : <><Calendar size={14}/> Schedule & Notify</>}
+            </button>
+          </div>
         </form>
       </div>
     </div>
@@ -427,7 +396,6 @@ export default function InterviewsPage() {
   const [queue,        setQueue]        = useState<QueueItem[]>([])
   const [aiSessions,   setAISessions]   = useState<AISession[]>([])
   const [pendingApps,  setPendingApps]  = useState<any[]>([])  // interview_scheduled apps with no interview entry
-  const [shortlisted,  setShortlisted]  = useState<any[]>([])  // shortlisted apps ready to be scheduled
   const [loading,      setLoading]      = useState(true)
   const [tab,          setTab]          = useState<'scheduled' | 'ai-queue' | 'ai-sessions' | 'rankings'>('scheduled')
   const [approving,    setApproving]    = useState<string | null>(null)
@@ -437,12 +405,11 @@ export default function InterviewsPage() {
   const loadAll = useCallback(async () => {
     setLoading(true)
     try {
-      const [ivRes, queueRes, sessRes, appsRes, shortRes] = await Promise.all([
+      const [ivRes, queueRes, sessRes, appsRes] = await Promise.all([
         fetch('/api/interviews').then(r => r.json()),
         fetch('/api/interviews/auto-schedule').then(r => r.json()),
         fetch('/api/interviews/ai-sessions').then(r => r.json()),
         fetch('/api/applications?status=interview_scheduled').then(r => r.json()).catch(() => []),
-        fetch('/api/applications?status=shortlisted').then(r => r.json()).catch(() => []),
       ])
       const ivList = Array.isArray(ivRes) ? ivRes : []
       setInterviews(ivList)
@@ -456,10 +423,6 @@ export default function InterviewsPage() {
         a.status === 'interview_scheduled' && !scheduledAppIds.has(a.id)
       )
       setPendingApps(pending)
-
-      // Shortlisted candidates ready to be scheduled
-      const allShortlisted = Array.isArray(shortRes) ? shortRes : (shortRes.applications || [])
-      setShortlisted(allShortlisted)
     } finally {
       setLoading(false)
     }
@@ -510,7 +473,6 @@ export default function InterviewsPage() {
           <h1 className="text-2xl font-bold text-gray-900">Interviews</h1>
           <p className="text-gray-500 text-sm mt-1">
             {upcoming.length} upcoming · {completed.length} completed
-            {shortlisted.length > 0 && <span className="text-violet-600 font-medium"> · {shortlisted.length} shortlisted</span>}
             {pendingApps.length > 0 && <span className="text-amber-600 font-medium"> · {pendingApps.length} pending scheduling</span>}
             {' · '}{queue.length} awaiting approval · {aiSessions.filter(s => s.status === 'completed' && s.ai_score !== null).length} scored
           </p>
@@ -529,7 +491,7 @@ export default function InterviewsPage() {
       {/* Tabs */}
       <div className="flex gap-1 bg-gray-100 p-1 rounded-xl mb-6 w-fit">
         {[
-          { key: 'scheduled',   label: 'Manual Interviews', count: upcoming.length + completed.length + pendingApps.length + shortlisted.length },
+          { key: 'scheduled',   label: 'Manual Interviews', count: upcoming.length + completed.length + pendingApps.length },
           { key: 'ai-queue',    label: 'AI Approval Queue', count: queue.length, highlight: queue.length > 0 },
           { key: 'ai-sessions', label: 'AI Sessions',       count: aiSessions.length },
           { key: 'rankings',    label: '🏆 Rankings',       count: aiSessions.filter(s => s.status === 'completed' && s.ai_score !== null).length },
@@ -555,44 +517,6 @@ export default function InterviewsPage() {
           {/* Manual Interviews */}
           {tab === 'scheduled' && (
             <div className="space-y-6">
-              {/* Shortlisted — ready to schedule */}
-              {shortlisted.length > 0 && (
-                <section>
-                  <div className="flex items-center gap-2 mb-3">
-                    <Star size={14} className="text-violet-500" />
-                    <h2 className="text-sm font-semibold text-violet-700 uppercase tracking-wide">
-                      Shortlisted — Ready to Schedule ({shortlisted.length})
-                    </h2>
-                  </div>
-                  <div className="bg-violet-50 border border-violet-200 rounded-xl p-3 text-xs text-violet-700 mb-3">
-                    These candidates have been shortlisted and are waiting for an interview to be scheduled.
-                  </div>
-                  <div className="space-y-3">
-                    {shortlisted.map((app: any) => (
-                      <div key={app.id} className="bg-white border border-violet-200 rounded-xl shadow-sm p-4 flex items-center justify-between gap-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 rounded-full bg-violet-100 text-violet-700 flex items-center justify-center text-sm font-bold flex-shrink-0">
-                            {(app.candidate?.full_name || '?').charAt(0)}
-                          </div>
-                          <div>
-                            <div className="font-semibold text-gray-900 text-sm">{app.candidate?.full_name || 'Unknown'}</div>
-                            <div className="text-xs text-gray-500">{app.job?.title || 'Unknown Role'}</div>
-                            {app.candidate?.email && (
-                              <div className="text-xs text-gray-400">{app.candidate.email}</div>
-                            )}
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => setScheduleApp(app)}
-                          className="flex items-center gap-1.5 text-xs bg-violet-600 hover:bg-violet-700 text-white px-3 py-1.5 rounded-lg transition font-semibold flex-shrink-0">
-                          <Calendar size={12}/> Schedule Interview
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              )}
-
               {/* Pending Scheduling section */}
               {pendingApps.length > 0 && (
                 <section>
@@ -648,7 +572,7 @@ export default function InterviewsPage() {
                   </div>
                 </section>
               )}
-              {interviews.length === 0 && pendingApps.length === 0 && shortlisted.length === 0 && (
+              {interviews.length === 0 && pendingApps.length === 0 && (
                 <div className="text-center py-16 text-gray-400 text-sm">No interviews scheduled yet.</div>
               )}
             </div>
@@ -881,8 +805,6 @@ function QueueCard({ item, approving, onApprove, onReject }: {
 
 /* ── AI Session Card ──────────────────────────────────────────────────────── */
 function AISessionCard({ session: s }: { session: AISession }) {
-  const [showVideo, setShowVideo] = useState(false)
-
   const statusMap: Record<string, { label: string; cls: string }> = {
     scheduled:   { label: 'Scheduled',  cls: 'bg-amber-100 text-amber-700' },
     in_progress: { label: 'Live',       cls: 'bg-red-100 text-red-700' },
@@ -928,76 +850,20 @@ function AISessionCard({ session: s }: { session: AISession }) {
               </span>
             )}
           </div>
-          <div className="mt-3 flex items-center gap-2 flex-wrap">
-            {s.status === 'completed' ? (
-              <>
-                <Link href={`/pre-screen/recordings`}
-                  className="flex items-center gap-1.5 text-xs bg-violet-600 text-white px-3 py-1.5 rounded-lg hover:bg-violet-700 transition">
-                  <Video size={12}/> View Results <ChevronRight size={11}/>
-                </Link>
-                {s.recording_url && (
-                  <button
-                    onClick={() => setShowVideo(p => !p)}
-                    className="flex items-center gap-1.5 text-xs border border-violet-300 text-violet-700 bg-violet-50 hover:bg-violet-100 px-3 py-1.5 rounded-lg transition">
-                    <Video size={12}/> {showVideo ? 'Hide Recording' : 'Watch Recording'}
-                  </button>
-                )}
-              </>
-            ) : (
-              /* HR copies the candidate interview link to share */
-              <CopyLinkButton sessionId={s.id}/>
+          <div className="mt-3 flex items-center gap-2">
+            <Link href={`/interview/ai-room?sessionId=${s.id}`}
+              className="flex items-center gap-1.5 text-xs bg-violet-600 text-white px-3 py-1.5 rounded-lg hover:bg-violet-700 transition">
+              <Video size={12} /> View Session <ChevronRight size={11}/>
+            </Link>
+            {s.tavus_conversation_url && s.status !== 'completed' && (
+              <a href={s.tavus_conversation_url} target="_blank" rel="noopener noreferrer"
+                className="flex items-center gap-1.5 text-xs border border-violet-300 text-violet-600 px-3 py-1.5 rounded-lg hover:bg-violet-50 transition">
+                <ExternalLink size={12}/> Join Live
+              </a>
             )}
           </div>
-          {/* Inline video player */}
-          {showVideo && s.recording_url && (
-            <div className="mt-4 rounded-xl overflow-hidden border border-gray-200 bg-gray-900">
-              <video
-                src={s.recording_url}
-                controls
-                className="w-full max-h-64 object-contain"
-              />
-              <div className="px-3 py-2 bg-gray-800 flex items-center justify-between">
-                <p className="text-xs text-gray-400">
-                  Interview Recording · {s.application?.candidate?.full_name}
-                </p>
-                <a href={s.recording_url} download target="_blank" rel="noreferrer"
-                  className="text-xs text-violet-400 hover:text-violet-300 transition">
-                  Download ↓
-                </a>
-              </div>
-            </div>
-          )}
         </div>
       </div>
-    </div>
-  )
-}
-
-/* ── Copy Candidate Link Button ───────────────────────────────────────────── */
-function CopyLinkButton({ sessionId }: { sessionId: string }) {
-  const [copied, setCopied] = useState(false)
-
-  function copyLink() {
-    const url = `${window.location.origin}/candidate-interview?sessionId=${sessionId}`
-    navigator.clipboard.writeText(url).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 3000)
-    })
-  }
-
-  return (
-    <div className="flex items-center gap-2">
-      <button
-        onClick={copyLink}
-        className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-semibold transition
-          ${copied
-            ? 'bg-green-100 text-green-700 border border-green-300'
-            : 'bg-violet-600 hover:bg-violet-700 text-white'}`}
-      >
-        {copied ? <CheckCircle size={12}/> : <Copy size={12}/>}
-        {copied ? 'Link Copied!' : 'Copy Candidate Link'}
-      </button>
-      <span className="text-[10px] text-gray-400">Share this with the candidate</span>
     </div>
   )
 }
@@ -1110,9 +976,9 @@ function RankingsView({ sessions }: { sessions: AISession[] }) {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <Link href={`/pre-screen/recordings`}
+                        <Link href={`/interview/ai-room?sessionId=${s.id}`}
                           className="text-xs text-violet-600 hover:text-violet-800 font-semibold flex items-center gap-1 justify-end">
-                          Results <ChevronRight size={12}/>
+                          View <ChevronRight size={12}/>
                         </Link>
                       </td>
                     </tr>

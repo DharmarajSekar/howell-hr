@@ -235,6 +235,7 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
   const simliVideoRef    = useRef<HTMLVideoElement>(null)
   const simliAudioRef    = useRef<HTMLAudioElement>(null)
   const simliClientRef   = useRef<any>(null)
+  const simliConfigRef   = useRef<{ apiKey: string; faceId: string } | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const recordingChunks  = useRef<BlobPart[]>([])
   const mediaStreamRef   = useRef<MediaStream | null>(null)
@@ -277,35 +278,21 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
     setPendingStream(null)
   }, [pendingStream])
 
-  /* ── Initialize Simli (runs once after mount) ── */
+  /* ── Fetch Simli config on mount (Initialize happens in startInterview when DOM is ready) ── */
   useEffect(() => {
-    async function initSimli() {
+    async function fetchSimliConfig() {
       try {
         const res = await fetch('/api/interviews/simli-session')
         if (!res.ok) return // not configured — will use fallback
         const { apiKey, faceId } = await res.json()
         if (!apiKey) return
-
-        // Dynamic import avoids SSR crash (SimliClient uses WebRTC APIs)
-        const { default: SimliClient } = await import('simli-client')
-        const client = new SimliClient()
-        client.Initialize({
-          apiKey,
-          faceId,
-          handleSilence: true,      // avatar idles naturally between speech
-          videoRef: simliVideoRef,
-          audioRef: simliAudioRef,
-          onConnect:    () => { setSimliConnected(true);  setSimliLoading(false) },
-          onDisconnect: () => { setSimliConnected(false) },
-          onFail:       () => { setSimliConnected(false); setSimliLoading(false) },
-        })
-        simliClientRef.current = client
+        simliConfigRef.current = { apiKey, faceId }
         setSimliEnabled(true)
       } catch (e) {
-        console.warn('[Simli] init failed — using fallback avatar', e)
+        console.warn('[Simli] config fetch failed — using fallback avatar', e)
       }
     }
-    initSimli()
+    fetchSimliConfig()
   }, [])
 
   /* ── Load session data on mount ── */
@@ -432,7 +419,7 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
        4. Wait for duration (from X-Duration-Ms header) then resume
   ────────────────────────────────────────────────────────────────────────── */
   async function speakWithSimli(text: string): Promise<boolean> {
-    if (!simliClientRef.current || !simliConnected) return false
+    if (!simliClientRef.current || !simliClientRef.current.isConnected()) return false
     try {
       const res = await fetch('/api/interviews/tts-pcm', {
         method: 'POST',
@@ -538,17 +525,45 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
     startRecording(); startElapsedTimer()
 
     // Start Simli WebRTC session (if configured)
-    if (simliEnabled && simliClientRef.current) {
+    // Initialize here (not on mount) so videoRef.current / audioRef.current are guaranteed to exist
+    if (simliEnabled && simliConfigRef.current && simliVideoRef.current && simliAudioRef.current) {
       setSimliLoading(true)
       try {
-        await simliClientRef.current.start()
-        // onConnect callback will set simliConnected = true
+        // Dynamic import avoids SSR crash (SimliClient uses WebRTC APIs)
+        const { default: SimliClient } = await import('simli-client')
+        const client = new SimliClient()
+
+        // Register event listeners BEFORE Initialize (simli-client v1.x event emitter API)
+        client.on('connected',    () => { setSimliConnected(true);  setSimliLoading(false) })
+        client.on('disconnected', () => { setSimliConnected(false) })
+        client.on('failed',       (_reason: string) => { setSimliConnected(false); setSimliLoading(false) })
+
+        // v1.x Initialize — pass actual DOM elements (not React refs), use faceID (capital)
+        client.Initialize({
+          apiKey:               simliConfigRef.current.apiKey,
+          faceID:               simliConfigRef.current.faceId,  // capital ID required in v1.x
+          handleSilence:        true,
+          maxSessionLength:     3600,
+          maxIdleTime:          300,
+          session_token:        '',
+          videoRef:             simliVideoRef.current,   // actual HTMLVideoElement
+          audioRef:             simliAudioRef.current,   // actual HTMLAudioElement
+          SimliURL:             '',
+          maxRetryAttempts:     3,
+          retryDelay_ms:        2000,
+          videoReceivedTimeout: 15000,
+          enableSFU:            true,
+          model:                'fasttalk',
+        })
+
+        simliClientRef.current = client
+        await client.start()
       } catch (e) {
         console.warn('[Simli] WebRTC start failed — using fallback', e)
         setSimliLoading(false)
       }
-      // Give Simli 2s to connect before speaking
-      await new Promise(r => setTimeout(r, 2000))
+      // Give Simli up to 3s to connect (WebRTC ICE negotiation) before speaking
+      await new Promise(r => setTimeout(r, 3000))
     }
 
     await avatarSpeak(

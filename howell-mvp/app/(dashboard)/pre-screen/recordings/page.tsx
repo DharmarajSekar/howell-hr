@@ -175,41 +175,43 @@ function AISessionModal({ session, onClose }: { session: any; onClose: () => voi
             </div>
           </div>
 
-          {/* Recording Video */}
-          {session.recording_url ? (
-            <div className="bg-gray-900 rounded-xl overflow-hidden">
-              <div className="px-4 py-2.5 flex items-center gap-2 border-b border-gray-700">
-                <Video size={13} className="text-gray-400"/>
-                <span className="text-xs font-semibold text-gray-300 uppercase tracking-wide">Interview Recording</span>
-              </div>
-              <div className="p-3">
-                <video
-                  src={session.recording_url}
-                  controls
-                  className="w-full rounded-lg"
-                  style={{ maxHeight: '280px' }}
-                >
-                  Your browser does not support video playback.
-                </video>
-              </div>
-            </div>
-          ) : (
-            <div className="bg-gray-50 border border-dashed border-gray-200 rounded-xl p-5 flex items-center gap-3">
-              <Video size={20} className="text-gray-300 flex-shrink-0"/>
-              <div>
-                <p className="text-sm text-gray-500 font-medium">No recording available</p>
-                <p className="text-xs text-gray-400 mt-0.5">Recording will appear here once the candidate completes the interview with video enabled.</p>
-              </div>
-            </div>
-          )}
-
           {/* AI Evaluation Summary */}
-          {session.ai_summary && (
+          {session.ai_evaluation && (
             <div className="bg-violet-50 border border-violet-100 rounded-xl p-4">
               <p className="text-xs font-semibold text-violet-700 uppercase tracking-wide mb-2 flex items-center gap-1.5">
                 <Star size={12} /> AI Evaluation Summary
               </p>
-              <p className="text-sm text-gray-700 leading-relaxed">{session.ai_summary}</p>
+              <p className="text-sm text-gray-700 leading-relaxed">{session.ai_evaluation}</p>
+            </div>
+          )}
+
+          {/* Strengths & Concerns */}
+          {(session.strengths?.length > 0 || session.concerns?.length > 0) && (
+            <div className="grid grid-cols-2 gap-4">
+              {session.strengths?.length > 0 && (
+                <div className="bg-green-50 rounded-xl p-4">
+                  <p className="text-xs font-semibold text-green-700 mb-2">✓ Strengths</p>
+                  <ul className="space-y-1">
+                    {session.strengths.map((s: string, i: number) => (
+                      <li key={i} className="text-xs text-gray-700 flex gap-1.5">
+                        <span className="text-green-500 flex-shrink-0 mt-0.5">•</span>{s}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {session.concerns?.length > 0 && (
+                <div className="bg-red-50 rounded-xl p-4">
+                  <p className="text-xs font-semibold text-red-600 mb-2">⚠ Concerns</p>
+                  <ul className="space-y-1">
+                    {session.concerns.map((c: string, i: number) => (
+                      <li key={i} className="text-xs text-gray-700 flex gap-1.5">
+                        <span className="text-red-400 flex-shrink-0 mt-0.5">•</span>{c}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
 

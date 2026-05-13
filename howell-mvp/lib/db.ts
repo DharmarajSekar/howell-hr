@@ -118,8 +118,7 @@ export const db = {
       return data || []
     },
     create: async (data: any) => {
-      const { data: iv, error } = await svc().from('interviews').insert({ ...data, status: 'scheduled' }).select().single()
-      if (error) throw new Error(error.message)
+      const { data: iv } = await svc().from('interviews').insert({ ...data, status: 'scheduled' }).select().single()
       return iv
     },
     update: async (id: string, data: any) => {

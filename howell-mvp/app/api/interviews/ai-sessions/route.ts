@@ -17,9 +17,6 @@ function db() {
 export async function GET(req: NextRequest) {
   const applicationId = new URL(req.url).searchParams.get('applicationId')
 
-  // NOTE: We intentionally exclude the interview_rounds join here —
-  // that table may not exist in all environments, and its absence would
-  // silently break this endpoint returning 0 sessions.
   let query = db()
     .from('ai_interview_sessions')
     .select(`
@@ -28,7 +25,8 @@ export async function GET(req: NextRequest) {
         id,
         candidate:candidates(full_name, email, current_title),
         job:jobs(title)
-      )
+      ),
+      round:interview_rounds(name, round_number, type, pass_score_threshold)
     `)
     .order('created_at', { ascending: false })
 
@@ -38,10 +36,6 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await query
 
-  if (error) {
-    console.error('[ai-sessions] DB error:', error.message)
-    // Return empty rather than 500 so the UI degrades gracefully
-    return NextResponse.json({ sessions: [], _error: error.message })
-  }
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ sessions: data || [] })
 }
