@@ -18,14 +18,13 @@ function db() {
 export async function GET(_req: NextRequest) {
   try {
     const { data, error } = await db()
-      .from('ai_sessions')
+      .from('ai_interview_sessions')
       .select(`
         id,
         status,
         ai_score,
-        ai_evaluation,
-        strengths,
-        concerns,
+        ai_summary,
+        recording_url,
         recommendation,
         transcript,
         scheduled_at,
@@ -46,9 +45,8 @@ export async function GET(_req: NextRequest) {
       id:             s.id,
       status:         s.status,
       ai_score:       s.ai_score,
-      ai_evaluation:  s.ai_evaluation,
-      strengths:      s.strengths   || [],
-      concerns:       s.concerns    || [],
+      ai_summary:     s.ai_summary   ?? null,
+      recording_url:  s.recording_url ?? null,
       recommendation: s.recommendation,
       transcript:     s.transcript  || [],
       completed_at:   s.completed_at,
