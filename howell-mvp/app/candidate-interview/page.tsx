@@ -628,7 +628,7 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
         {/* Current question + answer area */}
         {(phase === 'listening' || phase === 'processing') && (
           <div className="mt-5 bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-            {/* Question header */}
+            {/* Question */}
             <div className="flex items-start gap-3 bg-violet-50 border-b border-violet-100 p-4">
               <div className="w-7 h-7 bg-violet-600 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
                 <Bot size={13} className="text-white"/>
@@ -638,72 +638,77 @@ function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
               </p>
             </div>
 
-            <div className="p-4 space-y-3">
-              {/* Live voice preview — just a hint, not scored */}
-              {liveText && (
-                <div className="flex items-center gap-2 text-xs text-gray-400 bg-gray-50 rounded-lg px-3 py-2 border border-dashed border-gray-200">
-                  <Mic size={11} className="animate-pulse text-violet-400"/>
-                  <span className="italic">{liveText}</span>
-                  <span className="ml-auto text-gray-300">hearing…</span>
-                </div>
-              )}
-
-              {/* MAIN editable answer — this is what gets scored */}
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <p className="text-xs font-semibold text-gray-600">
-                    Your Answer <span className="text-violet-600 font-bold">← AI scores THIS text</span>
-                  </p>
-                  {currentAnswer && (
-                    <button
-                      onClick={() => { answerBufferRef.current = ''; setCurrentAnswer('') }}
-                      className="text-[11px] text-red-400 hover:text-red-600 transition"
-                    >
-                      Clear
-                    </button>
-                  )}
-                </div>
-                <textarea
-                  rows={4}
-                  value={currentAnswer}
-                  onChange={e => { answerBufferRef.current = e.target.value; setCurrentAnswer(e.target.value) }}
-                  placeholder="Type your answer here. If you used voice, review and fix any mistakes before submitting — the AI scores exactly what is written here."
-                  className="w-full border-2 border-violet-200 rounded-xl px-4 py-3 text-sm text-gray-800 focus:outline-none focus:border-violet-500 resize-none placeholder-gray-300 leading-relaxed"
-                  autoFocus
-                />
-                <p className="text-[11px] text-amber-600 mt-1 flex items-center gap-1">
-                  ⚠️ Voice recognition may make errors — always review and correct your text before submitting.
-                </p>
-              </div>
-
-              {/* Mic toggle + Submit */}
-              <div className="flex items-center gap-3 pt-1">
+            <div className="p-5 space-y-4">
+              {/* Mic status indicator */}
+              <div className="flex items-center gap-2">
+                <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
+                  liveText ? 'bg-red-500 animate-pulse' : currentAnswer ? 'bg-green-500' : 'bg-violet-400 animate-pulse'
+                }`}/>
+                <span className="text-xs text-gray-500 font-medium">
+                  {liveText ? 'Listening…' : currentAnswer ? 'Response captured — speak more or submit' : 'Speak your answer clearly'}
+                </span>
                 <button
                   onClick={() => {
                     setMicEnabled(p => !p)
                     if (micEnabled) { shouldListenRef.current = false; try { recognitionRef.current?.stop() } catch {} }
                     else startListening()
                   }}
-                  className={`flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg border transition font-medium flex-shrink-0
-                    ${micEnabled ? 'border-gray-200 text-gray-500 hover:bg-gray-50' : 'border-red-300 bg-red-50 text-red-600'}`}
+                  className={`ml-auto flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border transition
+                    ${micEnabled ? 'border-gray-200 text-gray-500' : 'border-red-300 bg-red-50 text-red-600'}`}
                 >
-                  {micEnabled ? <Mic size={12}/> : <MicOff size={12}/>}
+                  {micEnabled ? <Mic size={11}/> : <MicOff size={11}/>}
                   {micEnabled ? 'Mic On' : 'Mic Off'}
                 </button>
+              </div>
 
-                {phase === 'listening' && (
+              {/* Live interim text */}
+              {liveText && (
+                <div className="bg-gray-50 rounded-xl px-4 py-3 text-sm text-gray-400 italic border border-dashed border-gray-200 min-h-[40px]">
+                  {liveText}
+                </div>
+              )}
+
+              {/* Captured answer — read only, clean display */}
+              {currentAnswer && !liveText && (
+                <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-3">
+                  <p className="text-xs font-semibold text-green-700 mb-1.5 flex items-center gap-1">
+                    <CheckCircle size={11}/> Response captured
+                  </p>
+                  <p className="text-sm text-gray-800 leading-relaxed">{currentAnswer}</p>
+                </div>
+              )}
+
+              {/* Empty state */}
+              {!currentAnswer && !liveText && (
+                <div className="bg-gray-50 rounded-xl px-4 py-6 text-center border border-dashed border-gray-200">
+                  <Mic size={20} className="text-violet-300 mx-auto mb-2"/>
+                  <p className="text-xs text-gray-400">Start speaking — your answer will appear here</p>
+                </div>
+              )}
+
+              {/* Action buttons */}
+              {phase === 'listening' && (
+                <div className="flex gap-3">
+                  {currentAnswer && (
+                    <button
+                      onClick={() => { answerBufferRef.current = ''; setCurrentAnswer(''); setLiveText(''); startListening() }}
+                      className="flex items-center gap-1.5 text-sm px-4 py-2.5 rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 transition font-medium"
+                    >
+                      <Mic size={13}/> Speak Again
+                    </button>
+                  )}
                   <button
                     onClick={handleManualSubmit}
                     disabled={!currentAnswer.trim()}
                     className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold transition
                       ${currentAnswer.trim()
-                        ? 'bg-violet-600 hover:bg-violet-700 text-white shadow-md'
+                        ? 'bg-violet-600 hover:bg-violet-700 text-white shadow-md shadow-violet-200'
                         : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`}
                   >
                     <CheckCircle size={14}/> Submit Answer →
                   </button>
-                )}
-              </div>
+                </div>
+              )}
             </div>
           </div>
         )}
