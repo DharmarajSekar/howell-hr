@@ -1,8 +1,7 @@
 'use client'
-export const dynamic = 'force-dynamic'
 /**
- * AI Interview Room — HR View
- * /interview/ai-room?applicationId=X&roundId=Y
+ * Candidate AI Interview Page
+ * /candidate-interview?sessionId=<uuid>
  *
  * Avatar:  Simli real-time lip-sync avatar (if SIMLI_API_KEY + ELEVENLABS_API_KEY set)
  *          Falls back to animated SVG avatar + browser TTS automatically.
@@ -13,15 +12,10 @@ export const dynamic = 'force-dynamic'
 
 import { useEffect, useState, useRef, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
-import Link from 'next/link'
-import {
-  Mic, MicOff, CheckCircle, AlertCircle, Bot, User,
-  Circle, Square, Wifi, WifiOff, ArrowLeft, Copy,
-  Send, ExternalLink, Clock, Zap, Trophy
-} from 'lucide-react'
+import { Mic, MicOff, CheckCircle, AlertCircle, Bot, User, Circle, Square, Wifi, WifiOff } from 'lucide-react'
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   SVG Fallback Avatar
+   SVG Fallback Avatar (used when Simli is not configured)
 ───────────────────────────────────────────────────────────────────────────── */
 type AvatarState = 'idle' | 'speaking' | 'listening' | 'thinking'
 
@@ -89,27 +83,35 @@ function FallbackAvatar({ state }: { state: AvatarState }) {
             <stop offset="0%" stopColor="#1e2d4a"/><stop offset="100%" stopColor="#111827"/>
           </linearGradient>
         </defs>
+        {/* Body */}
         <path d="M60 320 Q90 300 160 295 Q230 300 260 320 L280 460 H40 Z" fill="url(#bg2)"/>
         <path d="M130 295 L105 330 L100 380 L120 340 L145 310 Z" fill="#162236"/>
         <path d="M190 295 L215 330 L220 380 L200 340 L175 310 Z" fill="#162236"/>
         <path d="M145 295 L130 310 L160 330 L190 310 L175 295 L160 305 Z" fill="#e8e8e8"/>
+        {/* Neck */}
         <rect x="138" y="248" width="44" height="55" rx="8" fill="url(#sg)"/>
         <ellipse cx="160" cy="268" rx="18" ry="6" fill="#D4956A" opacity="0.3"/>
+        {/* Hair back */}
         <path d="M68 140 Q48 180 44 240 Q42 290 55 330 Q60 345 68 330 Q58 290 60 240 Q62 190 78 150 Z" fill="url(#hg)"/>
         <path d="M252 140 Q272 180 276 240 Q278 290 265 330 Q260 345 252 330 Q262 290 260 240 Q258 190 242 150 Z" fill="url(#hg)"/>
+        {/* Head */}
         <ellipse cx="160" cy="178" rx="82" ry="92" fill="url(#sg)"/>
+        {/* Hair front */}
         <ellipse cx="160" cy="100" rx="85" ry="52" fill="url(#hg)"/>
         <rect x="75" y="100" width="170" height="45" fill="url(#hg)"/>
         <path d="M78 125 Q62 150 66 195 Q68 210 75 210 Q72 190 76 160 Q80 140 88 130 Z" fill="url(#hg)"/>
         <path d="M242 125 Q258 150 254 195 Q252 210 245 210 Q248 190 244 160 Q240 140 232 130 Z" fill="url(#hg)"/>
+        {/* Ears + earrings */}
         <ellipse cx="79" cy="183" rx="13" ry="17" fill="#E8A87C"/>
         <ellipse cx="79" cy="183" rx="7" ry="10" fill="#D4956A"/>
         <ellipse cx="241" cy="183" rx="13" ry="17" fill="#E8A87C"/>
         <ellipse cx="241" cy="183" rx="7" ry="10" fill="#D4956A"/>
         <circle cx="79" cy="197" r="4" fill="#d4a843" stroke="#b8922e" strokeWidth="1"/>
         <circle cx="241" cy="197" r="4" fill="#d4a843" stroke="#b8922e" strokeWidth="1"/>
+        {/* Eyebrows */}
         <path d={state==='thinking' ? 'M112 138 Q130 130 150 136' : 'M112 140 Q130 132 150 138'} stroke="#2C1A0E" strokeWidth="4.5" fill="none" strokeLinecap="round"/>
         <path d={state==='thinking' ? 'M170 136 Q190 130 208 138' : 'M170 138 Q190 132 208 140'} stroke="#2C1A0E" strokeWidth="4.5" fill="none" strokeLinecap="round"/>
+        {/* Eyes */}
         <ellipse cx="131" cy="168" rx="20" ry={eyesClosed ? 2.5 : 15} fill="white"/>
         {!eyesClosed && <>
           <circle cx={131+pupilX} cy="169" r="11" fill="#5C3010"/>
@@ -124,7 +126,9 @@ function FallbackAvatar({ state }: { state: AvatarState }) {
           <circle cx={192+pupilX} cy="165" r="3.5" fill="white"/>
         </>}
         <path d="M169 160 Q189 152 209 160" stroke="#1C0D03" strokeWidth="3" fill="none" strokeLinecap="round"/>
+        {/* Nose */}
         <path d="M155 190 Q148 212 152 218 Q160 222 168 218 Q172 212 165 190" stroke="#D4956A" strokeWidth="2" fill="none" strokeLinecap="round"/>
+        {/* Mouth */}
         {mouthOpen ? (
           <>
             <path d="M133 238 Q160 232 187 238 Q175 258 160 262 Q145 258 133 238 Z" fill="#8B2635"/>
@@ -196,11 +200,12 @@ interface TranscriptEntry {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   Main Interview Room (HR view — same Simli experience as candidate)
+   Main Interview Room
 ───────────────────────────────────────────────────────────────────────────── */
-function AIRoomInterviewInner({ applicationId, roundId }: { applicationId: string; roundId?: string | null }) {
+function CandidateInterviewRoom({ sessionId }: { sessionId: string }) {
   const TIME_PER_QUESTION = 120
 
+  /* ── State ── */
   const [phase,          setPhase]         = useState<Phase>('loading')
   const [candidateName,  setCandidateName] = useState('')
   const [jobTitle,       setJobTitle]      = useState('')
@@ -220,10 +225,11 @@ function AIRoomInterviewInner({ applicationId, roundId }: { applicationId: strin
   const [elapsedTime,    setElapsedTime]   = useState(0)
   const [pendingStream,  setPendingStream] = useState<MediaStream | null>(null)
   // Simli state
-  const [simliEnabled,   setSimliEnabled]  = useState(false)
-  const [simliConnected, setSimliConnected]= useState(false)
+  const [simliEnabled,   setSimliEnabled]  = useState(false)  // true = API keys configured
+  const [simliConnected, setSimliConnected]= useState(false)  // true = WebRTC live
   const [simliLoading,   setSimliLoading]  = useState(false)
 
+  /* ── Refs ── */
   const recognitionRef   = useRef<SpeechRecognition | null>(null)
   const webcamVideoRef   = useRef<HTMLVideoElement>(null)
   const simliVideoRef    = useRef<HTMLVideoElement>(null)
@@ -245,15 +251,17 @@ function AIRoomInterviewInner({ applicationId, roundId }: { applicationId: strin
   const shouldListenRef  = useRef(false)
   const phaseRef         = useRef<Phase>('loading')
   const sessionDbIdRef   = useRef<string | null>(null)
+  const appIdRef         = useRef('')
   const questionsRef     = useRef<string[]>([])
 
   function setPhaseSync(p: Phase) { phaseRef.current = p; setPhase(p) }
 
+  // Auto-scroll transcript
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [transcript, liveText])
 
-  /* Attach webcam stream once video element mounts */
+  /* ── Attach webcam stream once video element mounts ── */
   useEffect(() => {
     if (!pendingStream || !webcamVideoRef.current) return
     const video = webcamVideoRef.current
@@ -270,12 +278,12 @@ function AIRoomInterviewInner({ applicationId, roundId }: { applicationId: strin
     setPendingStream(null)
   }, [pendingStream])
 
-  /* Fetch Simli config on mount */
+  /* ── Fetch Simli config on mount (Initialize happens in startInterview when DOM is ready) ── */
   useEffect(() => {
     async function fetchSimliConfig() {
       try {
         const res = await fetch('/api/interviews/simli-session')
-        if (!res.ok) return
+        if (!res.ok) return // not configured — will use fallback
         const { apiKey, faceId } = await res.json()
         if (!apiKey) return
         simliConfigRef.current = { apiKey, faceId }
@@ -287,44 +295,47 @@ function AIRoomInterviewInner({ applicationId, roundId }: { applicationId: strin
     fetchSimliConfig()
   }, [])
 
-  /* Load questions + camera */
+  /* ── Load session data on mount ── */
   useEffect(() => {
     const { supported, reason } = checkBrowserSupport()
     if (!supported) { setBrowserOk(false); setBrowserMsg(reason); setPhaseSync('error'); return }
 
     async function load() {
+      const res  = await fetch(`/api/interviews/candidate-session?sessionId=${sessionId}`)
+      const data = await res.json()
+      if (!res.ok || data.error) { setErrorMsg(data.error || 'Invalid link.'); setPhaseSync('invalid'); return }
+
+      setCandidateName(data.candidateName)
+      setJobTitle(data.jobTitle)
+      appIdRef.current = data.applicationId
+      sessionDbIdRef.current = data.aiSessionId || null
+
+      const qRes  = await fetch(`/api/interviews/ai-interview?applicationId=${data.applicationId}${data.roundId ? `&roundId=${data.roundId}` : ''}`)
+      const qData = await qRes.json()
+      if (qData.error) { setErrorMsg(qData.error); setPhaseSync('error'); return }
+
+      questionsRef.current = qData.questions
+      if (qData.sessionId) sessionDbIdRef.current = qData.sessionId
+
+      // Render UI first (so video element mounts), THEN request camera
+      setPhaseSync('ready')
+      speechSynthesis.getVoices()
+      speechSynthesis.onvoiceschanged = () => speechSynthesis.getVoices()
+
       try {
-        const qRes  = await fetch(`/api/interviews/ai-interview?applicationId=${applicationId}${roundId ? `&roundId=${roundId}` : ''}`)
-        const qData = await qRes.json()
-        if (qData.error) { setErrorMsg(qData.error); setPhaseSync('error'); return }
-
-        questionsRef.current = qData.questions || []
-        if (qData.sessionId) sessionDbIdRef.current = qData.sessionId
-        if (qData.candidateName) setCandidateName(qData.candidateName)
-        if (qData.jobTitle)      setJobTitle(qData.jobTitle)
-
-        setPhaseSync('ready')
-        speechSynthesis.getVoices()
-        speechSynthesis.onvoiceschanged = () => speechSynthesis.getVoices()
-
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+        setPendingStream(stream)
+      } catch {
         try {
-          const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+          const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
           setPendingStream(stream)
-        } catch {
-          try {
-            const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
-            setPendingStream(stream)
-          } catch {}
-        }
-      } catch (e: any) {
-        setErrorMsg(e.message || 'Failed to load interview')
-        setPhaseSync('error')
+        } catch {}
       }
     }
     load()
-  }, [applicationId, roundId])
+  }, [sessionId])
 
-  /* Speech recognition */
+  /* ── Speech recognition ── */
   function buildRecognition(): SpeechRecognition {
     const SR = (window.SpeechRecognition || (window as any).webkitSpeechRecognition) as typeof SpeechRecognition
     const r = new SR()
@@ -400,7 +411,13 @@ function AIRoomInterviewInner({ applicationId, roundId }: { applicationId: strin
     startListening(); startQuestionTimer()
   }
 
-  /* Simli TTS */
+  /* ── AI speaks via Simli + ElevenLabs PCM16 ──────────────────────────────
+     Flow:
+       1. POST /api/interviews/tts-pcm  →  raw PCM16 bytes
+       2. simliClient.sendAudioData()   →  Simli renders lip-sync video
+       3. Audio plays back from Simli's WebRTC audio track (simliAudioRef)
+       4. Wait for duration (from X-Duration-Ms header) then resume
+  ────────────────────────────────────────────────────────────────────────── */
   async function speakWithSimli(text: string): Promise<boolean> {
     if (!simliClientRef.current || !simliClientRef.current.isConnected()) return false
     try {
@@ -410,9 +427,15 @@ function AIRoomInterviewInner({ applicationId, roundId }: { applicationId: strin
         body: JSON.stringify({ text }),
       })
       if (!res.ok) return false
+
       const durationMs = parseInt(res.headers.get('X-Duration-Ms') || '0', 10) || 4000
-      const pcmData    = new Uint8Array(await res.arrayBuffer())
+      const pcmBuffer  = await res.arrayBuffer()
+      const pcmData    = new Uint8Array(pcmBuffer)
+
+      // Send all PCM data — Simli handles internal buffering & timing
       simliClientRef.current.sendAudioData(pcmData)
+
+      // Wait for the audio to finish playing (duration + small WebRTC buffer)
       await new Promise<void>(resolve => setTimeout(resolve, durationMs + 800))
       return true
     } catch (err) {
@@ -421,6 +444,7 @@ function AIRoomInterviewInner({ applicationId, roundId }: { applicationId: strin
     }
   }
 
+  /* ── Master avatarSpeak: tries Simli first, falls back to browser TTS ── */
   async function avatarSpeak(text: string) {
     isSpeakingRef.current = true
     stopListening(); setAvatarState('speaking'); setMicEnabled(false)
@@ -430,14 +454,21 @@ function AIRoomInterviewInner({ applicationId, roundId }: { applicationId: strin
     setTranscript([...transcriptRef.current])
 
     const usedSimli = await speakWithSimli(text)
+
     if (!usedSimli) {
-      await speakBrowser(text, () => { isSpeakingRef.current = true }, () => {})
+      // Fallback: browser speechSynthesis
+      await speakBrowser(
+        text,
+        () => { isSpeakingRef.current = true },
+        () => {}
+      )
     }
 
     isSpeakingRef.current = false
     setMicEnabled(true)
   }
 
+  /* ── Submit answer ── */
   async function submitAnswer(answer: string) {
     stopListening(); setPhaseSync('processing'); setAvatarState('thinking')
     const entry: TranscriptEntry = { role: 'candidate', text: answer, timestamp: new Date().toISOString() }
@@ -449,7 +480,7 @@ function AIRoomInterviewInner({ applicationId, roundId }: { applicationId: strin
     try {
       const res  = await fetch('/api/interviews/ai-interview', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'score_answer', question: currentQ, answer, applicationId }),
+        body: JSON.stringify({ action: 'score_answer', question: currentQ, answer, applicationId: appIdRef.current }),
       })
       const data = await res.json()
       scoresRef.current = [...scoresRef.current, data.score ?? 50]
@@ -469,47 +500,54 @@ function AIRoomInterviewInner({ applicationId, roundId }: { applicationId: strin
   async function finishInterview() {
     clearInterval(elapsedTimerRef.current); stopListening()
     setPhaseSync('speaking')
-    await avatarSpeak('That concludes the interview. Thank you for your responses. Our HR team will be in touch shortly. Best of luck!')
+    await avatarSpeak('That concludes your interview. Thank you for your time. Your responses have been recorded and our HR team will be in touch shortly. Best of luck!')
     setAvatarState('idle'); setIsRecording(false)
+
+    // Close Simli WebRTC session
     try { simliClientRef.current?.close() } catch {}
 
+    const uploadPromise = stopAndUploadRecording()
     if (sessionDbIdRef.current && scoresRef.current.length > 0) {
       const avg = Math.round(scoresRef.current.reduce((a,b)=>a+b,0)/scoresRef.current.length)
       try {
         await fetch('/api/interviews/ai-interview', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: 'complete_session', sessionId: sessionDbIdRef.current,
-            transcript: transcriptRef.current, scores: scoresRef.current, avgScore: avg, applicationId }),
+            transcript: transcriptRef.current, scores: scoresRef.current, avgScore: avg, applicationId: appIdRef.current }),
         })
       } catch {}
     }
-    setPhaseSync('completed')
+    await uploadPromise; setPhaseSync('completed')
   }
 
   async function startInterview() {
     setPhaseSync('opening'); questionIndexRef.current = 0; setQuestionIndex(0)
     startRecording(); startElapsedTimer()
 
-    /* Start Simli — Initialize here so DOM elements are mounted */
+    // Start Simli WebRTC session (if configured)
+    // Initialize here (not on mount) so videoRef.current / audioRef.current are guaranteed to exist
     if (simliEnabled && simliConfigRef.current && simliVideoRef.current && simliAudioRef.current) {
       setSimliLoading(true)
       try {
+        // Dynamic import avoids SSR crash (SimliClient uses WebRTC APIs)
         const { default: SimliClient } = await import('simli-client')
         const client = new SimliClient()
 
+        // Register event listeners BEFORE Initialize (simli-client v1.x event emitter API)
         client.on('connected',    () => { setSimliConnected(true);  setSimliLoading(false) })
         client.on('disconnected', () => { setSimliConnected(false) })
         client.on('failed',       (_reason: string) => { setSimliConnected(false); setSimliLoading(false) })
 
+        // v1.x Initialize — pass actual DOM elements (not React refs), use faceID (capital)
         client.Initialize({
           apiKey:               simliConfigRef.current.apiKey,
-          faceID:               simliConfigRef.current.faceId,
+          faceID:               simliConfigRef.current.faceId,  // capital ID required in v1.x
           handleSilence:        true,
           maxSessionLength:     3600,
           maxIdleTime:          300,
           session_token:        '',
-          videoRef:             simliVideoRef.current,
-          audioRef:             simliAudioRef.current,
+          videoRef:             simliVideoRef.current,   // actual HTMLVideoElement
+          audioRef:             simliAudioRef.current,   // actual HTMLAudioElement
           SimliURL:             '',
           maxRetryAttempts:     3,
           retryDelay_ms:        2000,
@@ -524,6 +562,7 @@ function AIRoomInterviewInner({ applicationId, roundId }: { applicationId: strin
         console.warn('[Simli] WebRTC start failed — using fallback', e)
         setSimliLoading(false)
       }
+      // Give Simli up to 3s to connect (WebRTC ICE negotiation) before speaking
       await new Promise(r => setTimeout(r, 3000))
     }
 
@@ -537,6 +576,7 @@ function AIRoomInterviewInner({ applicationId, roundId }: { applicationId: strin
     startNewQuestion()
   }
 
+  /* ── Recording ── */
   function startRecording() {
     if (!mediaStreamRef.current) return
     recordingChunks.current = []
@@ -546,6 +586,25 @@ function AIRoomInterviewInner({ applicationId, roundId }: { applicationId: strin
     if (!mr) { try { mr = new MediaRecorder(mediaStreamRef.current) } catch { return } }
     mr.ondataavailable = (e) => { if (e.data.size > 0) recordingChunks.current.push(e.data) }
     mr.start(1000); mediaRecorderRef.current = mr; setIsRecording(true)
+  }
+
+  async function stopAndUploadRecording(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const mr = mediaRecorderRef.current
+      if (!mr || mr.state === 'inactive') { resolve(); return }
+      mr.onstop = async () => {
+        if (!recordingChunks.current.length) { resolve(); return }
+        const blob = new Blob(recordingChunks.current, { type: mr.mimeType || 'video/webm' })
+        try {
+          const fd = new FormData()
+          fd.append('video', blob, `interview-${sessionDbIdRef.current ?? 'unknown'}.webm`)
+          if (sessionDbIdRef.current) fd.append('sessionId', sessionDbIdRef.current)
+          await fetch('/api/interviews/upload-recording', { method: 'POST', body: fd })
+        } catch {}
+        resolve()
+      }
+      try { mr.stop() } catch { resolve() }
+    })
   }
 
   function handleManualSubmit() {
@@ -558,19 +617,19 @@ function AIRoomInterviewInner({ applicationId, roundId }: { applicationId: strin
   const progress  = questionsRef.current.length > 0 ? (questionIndex / questionsRef.current.length) * 100 : 0
   const timerPct  = (timeLeft / TIME_PER_QUESTION) * 100
   const elapsedStr = `${Math.floor(elapsedTime/60).toString().padStart(2,'0')}:${(elapsedTime%60).toString().padStart(2,'0')}`
-  const avgScore = scores.length ? Math.round(scores.reduce((a,b)=>a+b,0)/scores.length) : null
 
+  /* ── Error / Loading screens ── */
   if (!browserOk) return (
     <Screen icon={<AlertCircle size={40} className="text-red-500 mx-auto mb-4"/>} title="Browser Not Supported" body={browserMsg}/>
   )
-  if (phase === 'error') return (
-    <Screen icon={<AlertCircle size={40} className="text-red-500 mx-auto mb-4"/>} title="Error" body={errorMsg || 'Something went wrong.'}/>
+  if (phase === 'invalid') return (
+    <Screen icon={<AlertCircle size={40} className="text-amber-500 mx-auto mb-4"/>} title="Invalid Link" body={errorMsg || 'This link is invalid or has expired.'}/>
   )
   if (phase === 'loading') return (
     <div className="min-h-screen bg-gray-950 flex items-center justify-center">
       <div className="text-center">
         <div className="w-10 h-10 border-4 border-violet-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"/>
-        <p className="text-sm text-gray-400">Loading interview…</p>
+        <p className="text-sm text-gray-400">Loading your interview…</p>
       </div>
     </div>
   )
@@ -581,22 +640,14 @@ function AIRoomInterviewInner({ applicationId, roundId }: { applicationId: strin
           <CheckCircle size={32} className="text-green-400"/>
         </div>
         <h2 className="text-2xl font-bold text-white mb-2">Interview Complete!</h2>
-        {avgScore !== null && (
-          <div className="flex items-center justify-center gap-2 mb-4">
-            <Trophy size={16} className="text-yellow-400"/>
-            <span className={`text-2xl font-black ${avgScore >= 70 ? 'text-green-400' : avgScore >= 50 ? 'text-yellow-400' : 'text-red-400'}`}>
-              {avgScore}%
-            </span>
-            <span className="text-gray-400 text-sm">avg score</span>
-          </div>
-        )}
-        <p className="text-gray-400 text-sm mb-6">
-          {candidateName} has completed the AI interview for the <strong className="text-white">{jobTitle}</strong> position.
-        </p>
-        <Link href="/interviews"
-          className="inline-flex items-center gap-2 bg-violet-600 hover:bg-violet-700 text-white font-bold px-6 py-3 rounded-xl text-sm transition">
-          <ArrowLeft size={14}/> Back to Interviews
-        </Link>
+        <p className="text-gray-400 text-sm mb-6">Thank you for completing your AI interview for the <strong className="text-white">{jobTitle}</strong> position.</p>
+        <div className="bg-violet-900/30 border border-violet-700 rounded-xl p-4 text-left space-y-2">
+          <p className="text-xs font-semibold text-violet-300">What happens next?</p>
+          <p className="text-xs text-violet-400">✓ Your answers have been saved and scored</p>
+          <p className="text-xs text-violet-400">✓ HR will review your interview results</p>
+          <p className="text-xs text-violet-400">✓ You'll be contacted within 2–3 business days</p>
+        </div>
+        <p className="text-xs text-gray-600 mt-6">You may now close this tab.</p>
       </div>
     </div>
   )
@@ -604,25 +655,21 @@ function AIRoomInterviewInner({ applicationId, roundId }: { applicationId: strin
   /* ── MAIN INTERVIEW UI ── */
   return (
     <div className="h-screen bg-gray-950 flex flex-col overflow-hidden">
+
+      {/* Hidden Simli audio output */}
       <audio ref={simliAudioRef} autoPlay className="hidden"/>
 
-      {/* Top Bar */}
+      {/* ── Top Bar ── */}
       <div className="flex items-center justify-between px-5 py-2.5 bg-gray-950 border-b border-gray-800 flex-shrink-0 z-30 relative">
         <div className="flex items-center gap-2.5">
-          <Link href="/interviews" className="text-gray-500 hover:text-gray-300 transition mr-1">
-            <ArrowLeft size={16}/>
-          </Link>
           <div className="w-8 h-8 bg-violet-600 rounded-lg flex items-center justify-center">
             <Bot size={16} className="text-white"/>
           </div>
           <div>
-            <p className="text-white text-sm font-bold leading-tight">
-              AI Interview Room {jobTitle ? `| ${jobTitle}` : ''}
-            </p>
+            <p className="text-white text-sm font-bold leading-tight">Interview | {jobTitle || 'Loading…'}</p>
             <div className="flex items-center gap-2">
-              <p className="text-gray-500 text-[10px]">
-                {candidateName || 'Loading…'} · Powered by Gemini AI
-              </p>
+              <p className="text-gray-500 text-[10px]">Powered by Gemini AI</p>
+              {/* Simli connection badge */}
               {simliEnabled && (
                 <span className={`flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-full border font-medium ${
                   simliConnected
@@ -643,11 +690,12 @@ function AIRoomInterviewInner({ applicationId, roundId }: { applicationId: strin
         {phase !== 'ready' && (
           <div className="absolute left-1/2 -translate-x-1/2">
             <span className="text-white text-sm font-mono bg-black/60 border border-gray-700 px-4 py-1 rounded-full">
-              {elapsedStr}
+              Interview Time {elapsedStr}
             </span>
           </div>
         )}
 
+        {/* Submit */}
         <button onClick={handleManualSubmit}
           disabled={phase !== 'listening' || !currentAnswer.trim()}
           className={`text-sm px-5 py-1.5 rounded-lg font-semibold transition ${
@@ -659,10 +707,10 @@ function AIRoomInterviewInner({ applicationId, roundId }: { applicationId: strin
         </button>
       </div>
 
-      {/* Content */}
+      {/* ── Content ── */}
       <div className="flex flex-1 overflow-hidden">
 
-        {/* Avatar area */}
+        {/* ── Left: Avatar area ── */}
         <div className="relative flex-1 overflow-hidden bg-gray-950">
 
           {/* Progress bar */}
@@ -672,7 +720,7 @@ function AIRoomInterviewInner({ applicationId, roundId }: { applicationId: strin
             </div>
           )}
 
-          {/* Simli real-time video */}
+          {/* ── SIMLI real-time video ── */}
           <video
             ref={simliVideoRef}
             autoPlay
@@ -682,7 +730,7 @@ function AIRoomInterviewInner({ applicationId, roundId }: { applicationId: strin
             }`}
           />
 
-          {/* Fallback SVG avatar */}
+          {/* ── Fallback SVG avatar (shown when Simli not connected) ── */}
           <div className={`absolute inset-0 transition-opacity duration-700 ${simliConnected ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
             <FallbackAvatar state={avatarState}/>
           </div>
@@ -758,13 +806,13 @@ function AIRoomInterviewInner({ applicationId, roundId }: { applicationId: strin
                 <div className="w-14 h-14 bg-violet-900/50 border border-violet-700 rounded-full flex items-center justify-center mx-auto mb-4">
                   <Bot size={28} className="text-violet-400"/>
                 </div>
-                <h2 className="text-xl font-bold text-white mb-2">Ready to Start Interview?</h2>
+                <h2 className="text-xl font-bold text-white mb-2">Ready for your Interview?</h2>
                 <p className="text-sm text-gray-400 mb-1">
-                  <strong className="text-white">{questionsRef.current.length} questions</strong> for
-                  {candidateName && <> <strong className="text-white">{candidateName}</strong></>}
-                  {jobTitle && <> · <strong className="text-white">{jobTitle}</strong></>}
+                  <strong className="text-white">{questionsRef.current.length} questions</strong> for the{' '}
+                  <strong className="text-white">{jobTitle}</strong> role
                 </p>
-                <p className="text-xs text-gray-500 mb-5">2 min per question · AI scores automatically</p>
+                <p className="text-xs text-gray-500 mb-6">2 min per question · Speak clearly · Click Submit when done</p>
+                {/* Avatar mode indicator */}
                 <div className={`flex items-center justify-center gap-2 mb-5 text-xs px-3 py-2 rounded-xl border ${
                   simliEnabled
                     ? 'bg-emerald-900/20 border-emerald-800 text-emerald-400'
@@ -772,8 +820,13 @@ function AIRoomInterviewInner({ applicationId, roundId }: { applicationId: strin
                 }`}>
                   {simliEnabled
                     ? <><Wifi size={12}/> Simli real-time avatar enabled</>
-                    : <><Bot size={12}/> Using animated avatar (add SIMLI_API_KEY for live avatar)</>
+                    : <><Bot size={12}/> Using animated avatar (add SIMLI_API_KEY for real-time)</>
                   }
+                </div>
+                <div className="flex justify-center gap-4 mb-6 flex-wrap">
+                  <span className="text-xs text-gray-500">✅ Voice interview</span>
+                  <span className="text-xs text-gray-500">✅ Video recorded</span>
+                  <span className="text-xs text-gray-500">✅ AI scored</span>
                 </div>
                 <button onClick={startInterview}
                   className="w-full bg-violet-600 hover:bg-violet-700 text-white font-bold px-8 py-3 rounded-xl text-sm transition shadow-lg">
@@ -784,7 +837,7 @@ function AIRoomInterviewInner({ applicationId, roundId }: { applicationId: strin
           )}
         </div>
 
-        {/* Right: Live Transcript */}
+        {/* ── Right: Live Transcript ── */}
         <div className="w-72 xl:w-80 bg-gray-900 border-l border-gray-800 flex flex-col flex-shrink-0">
           <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between flex-shrink-0">
             <p className="text-white font-semibold text-sm">Live Transcript</p>
@@ -879,242 +932,13 @@ function AIRoomInterviewInner({ applicationId, roundId }: { applicationId: strin
               <span className="text-xs text-gray-400">AI evaluating your answer…</span>
             </div>
           )}
-
-          {/* Live scores */}
-          {scores.length > 0 && (
-            <div className="border-t border-gray-800 p-3 flex-shrink-0">
-              <p className="text-[10px] font-semibold text-gray-500 uppercase mb-2">Scores</p>
-              <div className="flex flex-wrap gap-1.5">
-                {scores.map((s, i) => (
-                  <span key={i} className={`text-xs font-bold px-2 py-0.5 rounded-full ${
-                    s >= 70 ? 'bg-green-900/40 text-green-400 border border-green-800' :
-                    s >= 50 ? 'bg-yellow-900/40 text-yellow-400 border border-yellow-800' :
-                    'bg-red-900/40 text-red-400 border border-red-800'
-                  }`}>Q{i+1}: {s}%</span>
-                ))}
-              </div>
-              {avgScore !== null && (
-                <p className="text-xs text-gray-400 mt-2">
-                  Avg: <span className={`font-bold ${avgScore >= 70 ? 'text-green-400' : avgScore >= 50 ? 'text-yellow-400' : 'text-red-400'}`}>{avgScore}%</span>
-                </p>
-              )}
-            </div>
-          )}
         </div>
       </div>
     </div>
   )
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   Session Management View (when no applicationId in URL)
-───────────────────────────────────────────────────────────────────────────── */
-interface Session {
-  id: string
-  status: string
-  ai_score: number | null
-  ai_summary: string | null
-  recording_url: string | null
-  created_at: string
-  application?: {
-    candidate?: { full_name: string; email: string; phone: string }
-    job?: { title: string }
-  }
-}
-
-function SessionManagementView() {
-  const [sessions,  setSessions]  = useState<Session[]>([])
-  const [loading,   setLoading]   = useState(true)
-  const [filter,    setFilter]    = useState<'all'|'pending'|'completed'>('all')
-  const [copied,    setCopied]    = useState<string | null>(null)
-
-  useEffect(() => {
-    fetch('/api/interviews/ai-sessions')
-      .then(r => r.json())
-      .then(d => {
-        const list = Array.isArray(d) ? d : (d?.sessions || [])
-        setSessions(list)
-      })
-      .finally(() => setLoading(false))
-  }, [])
-
-  const filtered = sessions.filter(s =>
-    filter === 'all'       ? true :
-    filter === 'pending'   ? s.status !== 'completed' :
-    filter === 'completed' ? s.status === 'completed' : true
-  )
-
-  const pendingCount   = sessions.filter(s => s.status !== 'completed').length
-  const completedCount = sessions.filter(s => s.status === 'completed').length
-  const avgScore = completedCount
-    ? Math.round(sessions.filter(s => s.ai_score).reduce((a,s) => a + (s.ai_score||0), 0) / completedCount)
-    : null
-
-  function copyLink(sessionId: string) {
-    const link = `${window.location.origin}/candidate-interview?sessionId=${sessionId}`
-    navigator.clipboard.writeText(link)
-    setCopied(sessionId)
-    setTimeout(() => setCopied(null), 2000)
-  }
-
-  return (
-    <div className="p-8 max-w-3xl mx-auto">
-      <div className="mb-6">
-        <div className="flex items-center gap-2 mb-1">
-          <Link href="/interviews" className="text-gray-400 hover:text-gray-600 transition">
-            <ArrowLeft size={16}/>
-          </Link>
-          <div className="p-2 bg-violet-100 rounded-lg">
-            <Bot size={18} className="text-violet-600"/>
-          </div>
-          <h1 className="text-2xl font-bold text-gray-900">AI Interview Room</h1>
-        </div>
-        <p className="text-gray-500 text-sm ml-12">
-          Manage AI interview sessions. Copy a candidate link and send it — the AI interviews them automatically.
-        </p>
-      </div>
-
-      {/* How it works */}
-      <div className="bg-violet-50 border border-violet-200 rounded-xl p-4 mb-6 grid grid-cols-3 gap-4">
-        {[
-          { num: '1', label: 'HR copies link', desc: 'Click a session below → copy the candidate interview link' },
-          { num: '2', label: 'Candidate opens it', desc: 'Candidate opens link on their device — no login needed' },
-          { num: '3', label: 'Simli AI interviews', desc: 'Photorealistic Simli avatar asks questions & scores automatically' },
-        ].map(s => (
-          <div key={s.num} className="text-center">
-            <div className="w-7 h-7 bg-violet-600 text-white rounded-full flex items-center justify-center text-xs font-bold mx-auto mb-1">{s.num}</div>
-            <div className="text-xs font-semibold text-violet-800">{s.label}</div>
-            <div className="text-xs text-violet-600 mt-0.5">{s.desc}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Stats */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
-        {[
-          { label: 'Pending', value: pendingCount, color: 'text-amber-600', bg: 'bg-amber-50 border-amber-200' },
-          { label: 'Completed', value: completedCount, color: 'text-green-600', bg: 'bg-green-50 border-green-200' },
-          { label: 'Avg Score', value: avgScore !== null ? `${avgScore}%` : '—', color: 'text-violet-600', bg: 'bg-violet-50 border-violet-200' },
-        ].map(s => (
-          <div key={s.label} className={`${s.bg} border rounded-xl p-4 text-center`}>
-            <div className={`text-2xl font-black ${s.color}`}>{s.value}</div>
-            <div className="text-xs text-gray-500 mt-0.5">{s.label}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Filter */}
-      <div className="flex gap-2 mb-4">
-        {(['all','pending','completed'] as const).map(f => (
-          <button key={f} onClick={() => setFilter(f)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition capitalize ${
-              filter === f ? 'bg-violet-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-            }`}>
-            {f === 'all' ? 'All' : f === 'pending' ? `Pending (${pendingCount})` : `Completed (${completedCount})`}
-          </button>
-        ))}
-      </div>
-
-      {loading && <div className="text-center py-12 text-gray-400 text-sm">Loading sessions…</div>}
-
-      {!loading && filtered.length === 0 && (
-        <div className="text-center py-12 border-2 border-dashed border-gray-200 rounded-xl text-gray-400 text-sm">
-          No sessions found. Create AI interview sessions from the Interviews page.
-        </div>
-      )}
-
-      <div className="space-y-3">
-        {filtered.map(session => {
-          const name  = session.application?.candidate?.full_name || 'Candidate'
-          const job   = session.application?.job?.title || 'Unknown Role'
-          const score = session.ai_score
-          const sc = session.status === 'completed'
-            ? { label: 'Completed', color: 'bg-green-100 text-green-700 border-green-200', icon: CheckCircle }
-            : session.status === 'in_progress'
-            ? { label: 'In Progress', color: 'bg-blue-100 text-blue-700 border-blue-200', icon: Zap }
-            : { label: 'Awaiting Candidate', color: 'bg-amber-100 text-amber-700 border-amber-200', icon: Clock }
-          const Icon = sc.icon
-
-          return (
-            <div key={session.id} className={`bg-white border rounded-xl shadow-sm p-4 ${
-              session.status === 'completed' ? 'border-green-200' :
-              session.status === 'in_progress' ? 'border-blue-300' : 'border-gray-200'
-            }`}>
-              <div className="flex items-center gap-3">
-                <div className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0 ${
-                  session.status === 'completed' ? 'bg-green-100 text-green-700' :
-                  session.status === 'in_progress' ? 'bg-blue-100 text-blue-700' : 'bg-violet-100 text-violet-700'
-                }`}>{name.charAt(0)}</div>
-                <div className="flex-1 min-w-0">
-                  <div className="font-semibold text-sm text-gray-900">{name}</div>
-                  <div className="text-xs text-gray-500 truncate">{job}</div>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  {score !== null && score !== undefined && (
-                    <span className={`text-sm font-black ${score >= 70 ? 'text-green-600' : score >= 50 ? 'text-amber-600' : 'text-red-500'}`}>
-                      {score}%
-                    </span>
-                  )}
-                  <span className={`text-xs px-2 py-0.5 rounded-full border font-medium flex items-center gap-1 ${sc.color}`}>
-                    <Icon size={10}/> {sc.label}
-                  </span>
-                </div>
-              </div>
-
-              {session.status !== 'completed' ? (
-                <div className="mt-3 flex items-center gap-2">
-                  <input readOnly
-                    value={`${typeof window !== 'undefined' ? window.location.origin : ''}/candidate-interview?sessionId=${session.id}`}
-                    className="flex-1 border border-gray-200 rounded-lg px-3 py-1.5 text-xs text-gray-600 bg-gray-50 focus:outline-none"/>
-                  <button onClick={() => copyLink(session.id)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition flex-shrink-0 ${
-                      copied === session.id ? 'bg-green-600 text-white' : 'bg-violet-600 hover:bg-violet-700 text-white'
-                    }`}>
-                    {copied === session.id ? <CheckCircle size={11}/> : <Copy size={11}/>}
-                    {copied === session.id ? 'Copied!' : 'Copy Link'}
-                  </button>
-                </div>
-              ) : (
-                session.ai_summary && (
-                  <div className="mt-3 bg-gray-50 rounded-xl p-3">
-                    <p className="text-xs text-gray-700 leading-relaxed">{session.ai_summary}</p>
-                  </div>
-                )
-              )}
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
-/* ─────────────────────────────────────────────────────────────────────────────
-   Route entry: if ?applicationId present → full interview room; else → session list
-───────────────────────────────────────────────────────────────────────────── */
-function AIRoomInner() {
-  const searchParams   = useSearchParams()
-  const applicationId  = searchParams.get('applicationId')
-  const roundId        = searchParams.get('roundId')
-
-  if (applicationId) {
-    return <AIRoomInterviewInner applicationId={applicationId} roundId={roundId}/>
-  }
-  return <SessionManagementView/>
-}
-
-export default function AIInterviewRoomPage() {
-  return (
-    <Suspense fallback={
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="w-10 h-10 border-4 border-violet-600 border-t-transparent rounded-full animate-spin"/>
-      </div>
-    }>
-      <AIRoomInner/>
-    </Suspense>
-  )
-}
-
+/* Reusable error screen */
 function Screen({ icon, title, body }: { icon: React.ReactNode; title: string; body: string }) {
   return (
     <div className="min-h-screen bg-gray-950 flex items-center justify-center p-6">
@@ -1124,5 +948,30 @@ function Screen({ icon, title, body }: { icon: React.ReactNode; title: string; b
         <p className="text-sm text-gray-400">{body}</p>
       </div>
     </div>
+  )
+}
+
+function CandidateInterviewPageInner() {
+  const params    = useSearchParams()
+  const sessionId = params.get('sessionId')
+  if (!sessionId) return (
+    <Screen
+      icon={<AlertCircle size={40} className="text-amber-500 mx-auto mb-4"/>}
+      title="Missing Interview Link"
+      body="Please use the full interview link sent to you by HR."
+    />
+  )
+  return <CandidateInterviewRoom sessionId={sessionId}/>
+}
+
+export default function CandidateInterviewPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
+        <div className="w-10 h-10 border-4 border-violet-600 border-t-transparent rounded-full animate-spin"/>
+      </div>
+    }>
+      <CandidateInterviewPageInner/>
+    </Suspense>
   )
 }
