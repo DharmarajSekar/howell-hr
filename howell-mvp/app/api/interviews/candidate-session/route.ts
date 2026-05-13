@@ -28,7 +28,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const { data: session, error } = await db()
-      .from('ai_sessions')
+      .from('ai_interview_sessions')
       .select(`
         id,
         status,
