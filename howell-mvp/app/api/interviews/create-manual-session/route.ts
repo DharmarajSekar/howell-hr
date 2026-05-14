@@ -25,7 +25,6 @@ async function createDailyRoom(applicationId: string, maxParticipants: number, d
       properties: {
         exp,
         max_participants: maxParticipants,
-        enable_recording: 'cloud',
         enable_noise_cancellation_ui: true,
         start_audio_off: false,
         start_video_off: false,
