@@ -29,9 +29,11 @@ import {
 
 interface Application {
   id: string
-  candidate_name: string
-  job_title: string
+  candidate_name?: string   // flat (legacy)
+  job_title?: string        // flat (legacy)
   current_stage: string
+  candidate?: { id?: string; full_name?: string; email?: string }
+  job?: { id?: string; title?: string }
 }
 
 interface InterviewRound {
@@ -66,6 +68,14 @@ interface Session {
   completed_at?: string
   candidate_link?: string
   result?: SessionResult
+}
+
+// Resolves candidate name + job title regardless of whether the API returned
+// flat fields (candidate_name / job_title) or nested objects (candidate / job)
+function appLabel(a: Application) {
+  const name  = a.candidate?.full_name  || a.candidate_name  || 'Unknown Candidate'
+  const title = a.job?.title            || a.job_title        || 'Unknown Role'
+  return { name, title }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -200,8 +210,8 @@ export default function AIInterviewRoomPage() {
         body: JSON.stringify({
           applicationId:  selectedApp,
           roundId:        selectedRound,
-          candidateName:  selectedAppObj.candidate_name,
-          jobTitle:       selectedAppObj.job_title,
+          candidateName:  appLabel(selectedAppObj).name,
+          jobTitle:       appLabel(selectedAppObj).title,
           questions:      selectedRoundObj.ai_questions || [],
           durationMinutes: selectedRoundObj.duration_minutes || 60,
         }),
@@ -318,7 +328,7 @@ export default function AIInterviewRoomPage() {
 
           <div className="mb-6">
             <h1 className="text-2xl font-bold">Interview Result</h1>
-            <p className="text-gray-400 mt-1">{app?.candidate_name} · {app?.job_title}</p>
+            <p className="text-gray-400 mt-1">{app ? appLabel(app).name : ''} · {app ? appLabel(app).title : ''}</p>
           </div>
 
           {/* Score overview */}
@@ -439,11 +449,14 @@ export default function AIInterviewRoomPage() {
                   className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-purple-500"
                 >
                   <option value="">— Choose an application —</option>
-                  {applications.map(a => (
-                    <option key={a.id} value={a.id}>
-                      {a.candidate_name} · {a.job_title}
-                    </option>
-                  ))}
+                  {applications.map(a => {
+                    const { name, title } = appLabel(a)
+                    return (
+                      <option key={a.id} value={a.id}>
+                        {name} · {title}
+                      </option>
+                    )
+                  })}
                 </select>
               )}
             </div>
