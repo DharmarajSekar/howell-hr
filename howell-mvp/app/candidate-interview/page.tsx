@@ -94,6 +94,7 @@ export default function CandidateInterviewPage() {
   const [isFullscreen,      setIsFullscreen]       = useState(false)
   const [silenceSeconds,    setSilenceSeconds]     = useState(0)
   const [showIntroConsent,  setShowIntroConsent]   = useState(true)
+  const [consentGiven,      setConsentGiven]       = useState(false)
   const tabSwitchCount      = useRef(0)
   const silenceTimer        = useRef<NodeJS.Timeout | null>(null)
   const silenceCountRef     = useRef(0)
@@ -204,9 +205,9 @@ export default function CandidateInterviewPage() {
     document.documentElement.requestFullscreen?.().then(() => setIsFullscreen(true)).catch(() => {})
   }
 
-  // ── Join Daily room ────────────────────────────────────────────────────────
+  // ── Join Daily room (only after consent is given) ─────────────────────────
   useEffect(() => {
-    if (!roomUrl) return
+    if (!roomUrl || !consentGiven) return
     let co: any
 
     const join = async () => {
@@ -234,7 +235,7 @@ export default function CandidateInterviewPage() {
     join()
     return () => { co?.leave().catch(() => {}); co?.destroy().catch(() => {}) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomUrl])
+  }, [roomUrl, consentGiven])
 
   function syncParticipants(co: any) {
     const participants = co.participants() as Record<string, any>
@@ -313,7 +314,7 @@ export default function CandidateInterviewPage() {
         </div>
 
         <button
-          onClick={() => { setShowIntroConsent(false); enterFullscreen() }}
+          onClick={() => { setShowIntroConsent(false); setConsentGiven(true); enterFullscreen() }}
           className="w-full bg-purple-600 hover:bg-purple-700 text-white py-3.5 rounded-xl font-semibold text-sm transition-all flex items-center justify-center gap-2"
         >
           <Maximize2 className="w-4 h-4" />
