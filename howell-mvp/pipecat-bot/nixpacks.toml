@@ -1,0 +1,13 @@
+# nixpacks.toml — explicit build config for Railway NIXPACKS builder
+# This file lives in howell-mvp/pipecat-bot/ alongside requirements.txt
+# Railway Root Directory must be set to: howell-mvp/pipecat-bot
+
+[phases.setup]
+# FFmpeg + libsndfile needed by pipecat audio pipeline
+nixPkgs = ["ffmpeg", "libsndfile"]
+
+[phases.install]
+cmds = ["pip install -r requirements.txt"]
+
+[start]
+cmd = "uvicorn server:app --host 0.0.0.0 --port $PORT"
