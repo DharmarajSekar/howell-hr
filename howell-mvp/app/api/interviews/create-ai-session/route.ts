@@ -117,7 +117,7 @@ export async function POST(request: NextRequest) {
       HRMS_CALLBACK_URL:     callbackUrl,
       HRMS_CALLBACK_SECRET:  process.env.INTERVIEW_CALLBACK_SECRET!,
       // AI service keys — forwarded from Next.js env to bot
-      ANTHROPIC_API_KEY:     process.env.ANTHROPIC_API_KEY!,
+      GEMINI_API_KEY:        process.env.GEMINI_API_KEY!,
       ELEVENLABS_API_KEY:    process.env.ELEVENLABS_API_KEY!,
       ELEVENLABS_VOICE_ID:   process.env.ELEVENLABS_VOICE_ID || '21m00Tcm4TlvDq8ikWAM',
       SIMLI_API_KEY:         process.env.SIMLI_API_KEY!,
