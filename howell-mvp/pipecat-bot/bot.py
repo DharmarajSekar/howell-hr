@@ -1,508 +1,308 @@
 #!/usr/bin/env python3
 """
-Howell HR — Pipecat AI Interview Bot
-======================================
-Orchestration framework : Pipecat
-WebRTC transport         : LiveKit (open-source, free tier)
-Speech-to-Text           : Deepgram nova-2
-Brain / LLM              : Google Gemini 1.5 Flash (FREE tier)
-Text-to-Speech           : ElevenLabs turbo-v2.5
-Avatar                   : Simli real-time lip-sync
-Interruption handling    : LiveKit VAD
-
-Invocation (env vars set by server.py before subprocess.Popen):
-  LIVEKIT_URL, LIVEKIT_ROOM_NAME, LIVEKIT_BOT_TOKEN
-  APPLICATION_ID, ROUND_ID
-  CANDIDATE_NAME, JOB_TITLE, COMPANY_NAME
-  INTERVIEW_QUESTIONS  (JSON array of strings)
-  MAX_DURATION_SECONDS (default 2700 = 45 min)
-  HRMS_CALLBACK_URL, HRMS_CALLBACK_SECRET
-  GEMINI_API_KEY
-  ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID
-  SIMLI_API_KEY, SIMLI_FACE_ID
-  DEEPGRAM_API_KEY
+Howell HR Interview Bot — Direct Implementation (no pipecat)
+=============================================================
+LiveKit WebRTC  : livekit Python client (no pipecat version issues)
+STT             : Deepgram REST API
+LLM             : Google Gemini 1.5 Flash
+TTS             : ElevenLabs turbo-v2.5  (PCM 16kHz output)
 """
 
 import asyncio
 import json
 import logging
 import os
-import sys
 import time
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
 
 import aiohttp
 from dotenv import load_dotenv
 
-# ── Pipecat core ──────────────────────────────────────────────────────────────
-from pipecat.frames.frames import (
-    EndFrame,
-    Frame,
-    LLMFullResponseEndFrame,
-    TextFrame,
-    TranscriptionFrame,
-    UserStartedSpeakingFrame,
-    UserStoppedSpeakingFrame,
-)
-from pipecat.pipeline.pipeline import Pipeline
-from pipecat.pipeline.runner import PipelineRunner
-from pipecat.pipeline.task import PipelineParams, PipelineTask
-from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
-from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
-
-# ── Pipecat services ──────────────────────────────────────────────────────────
-from pipecat.services.google import GoogleLLMService
-from pipecat.services.deepgram import DeepgramSTTService
-from pipecat.services.elevenlabs import ElevenLabsTTSService
-
-# ── Pipecat transport — LiveKit (open-source) ─────────────────────────────────
-from pipecat.transports.services.livekit import LiveKitParams, LiveKitTransport
+try:
+    from livekit import rtc
+except ImportError as e:
+    print(f"FATAL: livekit import failed: {e}", flush=True)
+    raise
 
 load_dotenv()
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
-    datefmt="%H:%M:%S",
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("howell-bot")
 
+# ── Config ────────────────────────────────────────────────────────────────────
+LIVEKIT_URL    = os.environ["LIVEKIT_URL"]
+BOT_TOKEN      = os.environ["LIVEKIT_BOT_TOKEN"]
+DEEPGRAM_KEY   = os.environ["DEEPGRAM_API_KEY"]
+GEMINI_KEY     = os.environ["GEMINI_API_KEY"]
+EL_KEY         = os.environ["ELEVENLABS_API_KEY"]
+VOICE_ID       = os.environ.get("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
+CANDIDATE      = os.environ.get("CANDIDATE_NAME", "Candidate")
+JOB_TITLE      = os.environ.get("JOB_TITLE", "the role")
+COMPANY        = os.environ.get("COMPANY_NAME", "our company")
+QUESTIONS      = json.loads(os.environ.get("INTERVIEW_QUESTIONS", "[]"))
+MAX_DURATION   = int(os.environ.get("MAX_DURATION_SECONDS", "2700"))
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Configuration
-# ══════════════════════════════════════════════════════════════════════════════
+SAMPLE_RATE    = 16000
+CHANNELS       = 1
+CHUNK_MS       = 20   # 20ms audio chunks
+CHUNK_SAMPLES  = SAMPLE_RATE * CHUNK_MS // 1000   # 320 samples
+CHUNK_BYTES    = CHUNK_SAMPLES * 2 * CHANNELS     # 2 bytes/sample
 
-@dataclass
-class BotConfig:
-    # ── LiveKit ───────────────────────────────────────────────────────────────
-    livekit_url: str       = field(default_factory=lambda: os.environ["LIVEKIT_URL"])
-    livekit_room_name: str = field(default_factory=lambda: os.environ["LIVEKIT_ROOM_NAME"])
-    livekit_bot_token: str = field(default_factory=lambda: os.environ["LIVEKIT_BOT_TOKEN"])
-
-    # ── Interview context ─────────────────────────────────────────────────────
-    application_id: str       = field(default_factory=lambda: os.environ["APPLICATION_ID"])
-    round_id: str             = field(default_factory=lambda: os.environ["ROUND_ID"])
-    candidate_name: str       = field(default_factory=lambda: os.environ.get("CANDIDATE_NAME", "Candidate"))
-    job_title: str            = field(default_factory=lambda: os.environ.get("JOB_TITLE", "the role"))
-    company_name: str         = field(default_factory=lambda: os.environ.get("COMPANY_NAME", "our company"))
-    questions: List[str]      = field(default_factory=lambda: json.loads(os.environ.get("INTERVIEW_QUESTIONS", "[]")))
-    max_duration_seconds: int = field(default_factory=lambda: int(os.environ.get("MAX_DURATION_SECONDS", "2700")))
-
-    # ── HRMS callback ─────────────────────────────────────────────────────────
-    hrms_callback_url: str    = field(default_factory=lambda: os.environ["HRMS_CALLBACK_URL"])
-    hrms_callback_secret: str = field(default_factory=lambda: os.environ["HRMS_CALLBACK_SECRET"])
-
-    # ── AI services ───────────────────────────────────────────────────────────
-    gemini_api_key: str       = field(default_factory=lambda: os.environ["GEMINI_API_KEY"])
-    elevenlabs_api_key: str   = field(default_factory=lambda: os.environ["ELEVENLABS_API_KEY"])
-    elevenlabs_voice_id: str  = field(default_factory=lambda: os.environ.get("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM"))
-    simli_api_key: str        = field(default_factory=lambda: os.environ["SIMLI_API_KEY"])
-    simli_face_id: str        = field(default_factory=lambda: os.environ.get("SIMLI_FACE_ID", "cace3ef7-a4c4-425d-a8cf-a5358eb0c427"))
-    deepgram_api_key: str     = field(default_factory=lambda: os.environ["DEEPGRAM_API_KEY"])
+logger.info(f"[Config] Candidate={CANDIDATE} | Job={JOB_TITLE} | Questions={len(QUESTIONS)}")
+logger.info(f"[Config] LiveKit URL={LIVEKIT_URL}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Custom Frame Processors
+# System prompt
 # ══════════════════════════════════════════════════════════════════════════════
 
-class TranscriptCollector(FrameProcessor):
-    """
-    Captures candidate utterances (from STT) and bot responses (from LLM)
-    into a structured list.  Thread-safe — only one pipeline task runs at a time.
-    """
+def build_system_prompt() -> str:
+    q_block = "\n".join(f"Q{i+1}: {q}" for i, q in enumerate(QUESTIONS))
+    if not q_block:
+        q_block = "(Ask general competency questions)"
+    return f"""You are Alex, a professional AI interviewer representing {COMPANY}.
+You are interviewing {CANDIDATE} for the position of {JOB_TITLE}.
 
-    def __init__(self):
-        super().__init__()
-        self._transcript: List[Dict[str, Any]] = []
-        self._buffer: List[str] = []
-        self._utterance_start: Optional[float] = None
+Interview questions to ask in order:
+{q_block}
 
-    @property
-    def transcript(self) -> List[Dict[str, Any]]:
-        return list(self._transcript)
-
-    async def process_frame(self, frame: Frame, direction: FrameDirection):
-        await super().process_frame(frame, direction)
-
-        if isinstance(frame, UserStartedSpeakingFrame):
-            self._utterance_start = time.time()
-            self._buffer = []
-
-        elif isinstance(frame, TranscriptionFrame):
-            if frame.text:
-                self._buffer.append(frame.text.strip())
-
-        elif isinstance(frame, UserStoppedSpeakingFrame) and self._buffer:
-            text = " ".join(self._buffer).strip()
-            if text:
-                self._transcript.append({
-                    "role": "candidate",
-                    "text": text,
-                    "timestamp": self._utterance_start or time.time(),
-                })
-            self._buffer = []
-            self._utterance_start = None
-
-        elif isinstance(frame, TextFrame) and direction == FrameDirection.DOWNSTREAM:
-            # Capture bot speech text produced by the LLM
-            if frame.text and frame.text.strip():
-                self._transcript.append({
-                    "role": "interviewer",
-                    "text": frame.text.strip(),
-                    "timestamp": time.time(),
-                })
-
-        await self.push_frame(frame, direction)
+Rules:
+1. Begin with a warm welcome and explain this is an AI-conducted interview.
+2. Ask ONE question at a time — wait for the candidate's answer.
+3. After each answer, give a brief 1-sentence acknowledgement, then ask the next question.
+4. Keep ALL your responses SHORT (2-3 sentences max) — this is spoken audio.
+5. Never use markdown, bullet points, or numbered lists in your responses.
+6. Be encouraging and professional throughout.
+7. After all questions are answered, sincerely thank {CANDIDATE} and say HR will follow up.
+8. Begin now with a warm greeting to {CANDIDATE} and ask the first question."""
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# AI Service calls
+# ══════════════════════════════════════════════════════════════════════════════
 
-class EndInterviewDetector(FrameProcessor):
-    """
-    Watches LLM output for the INTERVIEW_COMPLETE sentinel.
+async def call_gemini(messages: list) -> str:
+    """Call Gemini 1.5 Flash and return response text."""
+    system_text = ""
+    chat_messages = []
+    for m in messages:
+        if m["role"] == "system":
+            system_text = m["content"]
+        else:
+            role = "user" if m["role"] == "user" else "model"
+            chat_messages.append({"role": role, "parts": [{"text": m["content"]}]})
 
-    When detected:
-      1. Strips sentinel from frame so it is not spoken aloud.
-      2. Asynchronously calls Gemini to evaluate the transcript.
-      3. POSTs the evaluation + transcript to the HRMS callback URL.
-      4. Queues an EndFrame to cleanly shut down the pipeline.
-    """
+    payload: dict = {
+        "contents": chat_messages,
+        "generationConfig": {"maxOutputTokens": 300, "temperature": 0.7},
+    }
+    if system_text:
+        payload["system_instruction"] = {"parts": [{"text": system_text}]}
 
-    SENTINEL = "INTERVIEW_COMPLETE"
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_KEY}",
+            json=payload,
+            timeout=aiohttp.ClientTimeout(total=20),
+        ) as resp:
+            data = await resp.json()
+            if resp.status != 200:
+                logger.error(f"[Gemini] Error {resp.status}: {data}")
+                return "I apologize, I had a technical issue. Could you repeat that?"
+            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
 
-    def __init__(self, config: BotConfig, collector: TranscriptCollector):
-        super().__init__()
-        self._config = config
-        self._collector = collector
-        self._triggered = False
-        self._task_ref: Optional[PipelineTask] = None   # set after task creation
 
-    def set_task(self, task: PipelineTask):
-        self._task_ref = task
+async def text_to_pcm(text: str) -> bytes:
+    """Convert text to PCM-16 audio via ElevenLabs."""
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID}",
+            headers={"xi-api-key": EL_KEY, "Content-Type": "application/json"},
+            json={
+                "text": text,
+                "model_id": "eleven_turbo_v2_5",
+                "output_format": "pcm_16000",
+            },
+            timeout=aiohttp.ClientTimeout(total=30),
+        ) as resp:
+            if resp.status != 200:
+                err = await resp.text()
+                logger.error(f"[TTS] ElevenLabs {resp.status}: {err[:200]}")
+                return b""
+            return await resp.read()
 
-    async def process_frame(self, frame: Frame, direction: FrameDirection):
-        await super().process_frame(frame, direction)
 
-        if (
-            isinstance(frame, TextFrame)
-            and self.SENTINEL in frame.text
-            and not self._triggered
-        ):
-            self._triggered = True
-            clean = frame.text.replace(self.SENTINEL, "").strip()
-            if clean:
-                await self.push_frame(TextFrame(text=clean), direction)
+async def transcribe_pcm(pcm_bytes: bytes) -> str:
+    """Transcribe raw 16kHz PCM-16 audio via Deepgram."""
+    if len(pcm_bytes) < SAMPLE_RATE:   # < 0.5s — skip
+        return ""
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            "https://api.deepgram.com/v1/listen?model=nova-2&language=en-US&punctuate=true",
+            headers={
+                "Authorization": f"Token {DEEPGRAM_KEY}",
+                "Content-Type": "audio/raw;encoding=linear16;sample_rate=16000;channels=1",
+            },
+            data=pcm_bytes,
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as resp:
+            data = await resp.json()
+            try:
+                return data["results"]["channels"][0]["alternatives"][0]["transcript"].strip()
+            except (KeyError, IndexError):
+                return ""
 
-            # Fire-and-forget so we don't block the pipeline
-            asyncio.create_task(self._finalize())
-            return  # Do NOT push the original frame
 
-        await self.push_frame(frame, direction)
+# ══════════════════════════════════════════════════════════════════════════════
+# Audio helpers
+# ══════════════════════════════════════════════════════════════════════════════
 
-    # ── Finalize ──────────────────────────────────────────────────────────────
+def pcm_has_voice(pcm: bytes, threshold: int = 600) -> bool:
+    """Simple energy-based voice activity detection."""
+    total = 0
+    count = 0
+    for i in range(0, len(pcm) - 1, 2):
+        sample = int.from_bytes(pcm[i:i+2], "little", signed=True)
+        total += abs(sample)
+        count += 1
+    return (total // max(count, 1)) > threshold
 
-    async def _finalize(self):
-        logger.info("[EndInterview] Sentinel received — evaluating transcript…")
-        transcript = self._collector.transcript
-        evaluation = await self._evaluate(transcript)
-        await self._post_callback(transcript, evaluation)
-        await asyncio.sleep(4)          # Let TTS finish the goodbye sentence
-        if self._task_ref:
-            await self._task_ref.queue_frame(EndFrame())
 
-    # ── Evaluation via Gemini 1.5 Flash ───────────────────────────────────────
-
-    async def _evaluate(self, transcript: List[Dict]) -> Dict[str, Any]:
-        logger.info("[Evaluate] Calling Gemini for structured evaluation…")
-
-        formatted_transcript = "\n".join(
-            f"[{t['role'].upper()}]: {t['text']}" for t in transcript
+async def push_audio(source: rtc.AudioSource, pcm_bytes: bytes):
+    """Push PCM bytes to LiveKit in 20ms chunks."""
+    if not pcm_bytes:
+        return
+    for i in range(0, len(pcm_bytes), CHUNK_BYTES):
+        chunk = pcm_bytes[i : i + CHUNK_BYTES]
+        # Pad last chunk if needed
+        if len(chunk) < CHUNK_BYTES:
+            chunk = chunk + b"\x00" * (CHUNK_BYTES - len(chunk))
+        frame = rtc.AudioFrame(
+            data=chunk,
+            sample_rate=SAMPLE_RATE,
+            num_channels=CHANNELS,
+            samples_per_channel=CHUNK_SAMPLES,
         )
-        questions_list = "\n".join(
-            f"  Q{i+1}: {q}" for i, q in enumerate(self._config.questions)
+        await source.capture_frame(frame)
+        await asyncio.sleep(CHUNK_MS / 1000 * 0.9)  # slight under-pace for smooth delivery
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Main bot
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def run_bot():
+    logger.info("[Bot] Initialising…")
+    room = rtc.Room()
+
+    # Audio source for bot speech output
+    audio_source = rtc.AudioSource(sample_rate=SAMPLE_RATE, num_channels=CHANNELS)
+    bot_track = rtc.LocalAudioTrack.create_audio_track("alex-voice", audio_source)
+
+    # State
+    conversation: list = [{"role": "system", "content": build_system_prompt()}]
+    bot_is_speaking = asyncio.Lock()
+    audio_buffer   = bytearray()
+    last_voice_ts  = 0.0
+    candidate_speaking = False
+
+    async def say(text: str):
+        """Generate TTS and push to LiveKit."""
+        async with bot_is_speaking:
+            logger.info(f"[Bot] Speaking: {text[:80]}…")
+            pcm = await text_to_pcm(text)
+            if pcm:
+                await push_audio(audio_source, pcm)
+            logger.info("[Bot] Done speaking")
+
+    async def handle_utterance(pcm: bytes):
+        """Process captured candidate speech: STT → LLM → TTS."""
+        transcript = await transcribe_pcm(pcm)
+        logger.info(f"[Bot] Transcript: {transcript!r}")
+        if not transcript:
+            return
+        conversation.append({"role": "user", "content": transcript})
+        response = await call_gemini(conversation)
+        logger.info(f"[Bot] Gemini response: {response[:80]}…")
+        conversation.append({"role": "assistant", "content": response})
+        await say(response)
+
+    async def greet():
+        await asyncio.sleep(1.5)  # Let candidate settle
+        greeting = (
+            f"Hello {CANDIDATE}! I'm Alex, your AI interviewer from {COMPANY}. "
+            f"Welcome to your interview for the {JOB_TITLE} position. "
+            f"This is an AI-conducted interview — your responses will be reviewed by HR. "
+            f"Let's begin. {QUESTIONS[0] if QUESTIONS else 'Could you start by introducing yourself?'}"
         )
+        conversation.append({"role": "assistant", "content": greeting})
+        await say(greeting)
 
-        evaluation_prompt = f"""You are an expert HR evaluator. Carefully review the following AI interview transcript and return a structured JSON evaluation.
+    # ── LiveKit event handlers ─────────────────────────────────────────────────
 
-POSITION: {self._config.job_title}
-CANDIDATE: {self._config.candidate_name}
-COMPANY: {self._config.company_name}
+    @room.on("participant_connected")
+    def on_participant_connected(participant: rtc.RemoteParticipant):
+        logger.info(f"[Bot] Participant joined: {participant.identity}")
+        asyncio.ensure_future(greet())
 
-INTERVIEW QUESTIONS:
-{questions_list}
+    @room.on("track_subscribed")
+    def on_track_subscribed(
+        track: rtc.Track,
+        publication: rtc.RemoteTrackPublication,
+        participant: rtc.RemoteParticipant,
+    ):
+        if track.kind != rtc.TrackKind.KIND_AUDIO:
+            return
+        logger.info(f"[Bot] Subscribed to audio track from {participant.identity}")
 
-FULL TRANSCRIPT:
-{formatted_transcript}
+        async def read_audio():
+            nonlocal audio_buffer, last_voice_ts, candidate_speaking
+            audio_stream = rtc.AudioStream(track)
+            async for frame_event in audio_stream:
+                frame = frame_event.frame
 
-Return ONLY a valid JSON object — no markdown fences, no commentary:
-{{
-  "overallScore": <integer 0-100>,
-  "recommendation": "strong_hire" | "hire" | "maybe" | "no_hire",
-  "summary": "<2-3 sentence overall assessment>",
-  "communicationScore": <integer 0-10>,
-  "technicalScore": <integer 0-10>,
-  "culturalFitScore": <integer 0-10>,
-  "strengths": ["<strength>", "…"],
-  "areasForImprovement": ["<area>", "…"],
-  "questionEvaluations": [
-    {{
-      "question": "<question text>",
-      "candidateResponse": "<brief summary>",
-      "score": <integer 0-10>,
-      "notes": "<evaluator notes>"
-    }}
-  ]
-}}"""
+                # Resample from LiveKit native (48kHz) to 16kHz by taking every 3rd sample
+                raw = bytes(frame.data)
+                # LiveKit delivers audio at 48kHz 16-bit — downsample to 16kHz
+                pcm16k = bytes(raw[i*6 : i*6+2] for i in range(len(raw)//6))
 
-        try:
-            async with aiohttp.ClientSession() as session:
-                resp = await session.post(
-                    f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={self._config.gemini_api_key}",
-                    json={
-                        "contents": [{"parts": [{"text": evaluation_prompt}]}],
-                        "generationConfig": {"maxOutputTokens": 2000, "temperature": 0.3},
-                    },
-                    headers={"content-type": "application/json"},
-                    timeout=aiohttp.ClientTimeout(total=60),
-                )
-                data = await resp.json()
-                raw = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                if bot_is_speaking.locked():
+                    continue  # Don't capture while bot is speaking
 
-                # Strip accidental markdown fences
-                if raw.startswith("```"):
-                    parts = raw.split("```")
-                    raw = parts[1]
-                    if raw.lower().startswith("json"):
-                        raw = raw[4:]
+                has_voice = pcm_has_voice(pcm16k)
+                now = time.time()
 
-                return json.loads(raw.strip())
+                if has_voice:
+                    audio_buffer.extend(pcm16k)
+                    last_voice_ts = now
+                    candidate_speaking = True
+                elif candidate_speaking and (now - last_voice_ts) > 1.2:
+                    # Silence for 1.2s after speech → candidate finished
+                    candidate_speaking = False
+                    if len(audio_buffer) > SAMPLE_RATE:  # at least 0.5s of audio
+                        captured = bytes(audio_buffer)
+                        audio_buffer.clear()
+                        asyncio.ensure_future(handle_utterance(captured))
 
-        except Exception as exc:
-            logger.error(f"[Evaluate] Error calling Gemini: {exc}")
-            return {
-                "overallScore": 0,
-                "recommendation": "maybe",
-                "summary": "Evaluation could not be completed due to a technical error.",
-                "communicationScore": 0,
-                "technicalScore": 0,
-                "culturalFitScore": 0,
-                "strengths": [],
-                "areasForImprovement": [],
-                "questionEvaluations": [],
-                "error": str(exc),
-            }
+        asyncio.ensure_future(read_audio())
 
-    # ── HRMS Callback ─────────────────────────────────────────────────────────
+    # ── Connect to LiveKit ─────────────────────────────────────────────────────
+    logger.info(f"[Bot] Connecting to LiveKit: {LIVEKIT_URL}")
+    await room.connect(LIVEKIT_URL, BOT_TOKEN)
+    logger.info(f"[Bot] Connected to room: {room.name}")
 
-    async def _post_callback(self, transcript: List[Dict], evaluation: Dict[str, Any]):
-        payload = {
-            "applicationId": self._config.application_id,
-            "roundId": self._config.round_id,
-            "candidateName": self._config.candidate_name,
-            "jobTitle": self._config.job_title,
-            "completedAt": time.time(),
-            "transcript": transcript,
-            "evaluation": evaluation,
-        }
+    # Publish audio track
+    options = rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE)
+    await room.local_participant.publish_track(bot_track, options)
+    logger.info("[Bot] Audio track published — bot is visible in room")
 
-        try:
-            async with aiohttp.ClientSession() as session:
-                resp = await session.post(
-                    self._config.hrms_callback_url,
-                    json=payload,
-                    headers={
-                        "Authorization": f"Bearer {self._config.hrms_callback_secret}",
-                        "Content-Type": "application/json",
-                    },
-                    timeout=aiohttp.ClientTimeout(total=30),
-                )
-                logger.info(f"[Callback] HRMS responded HTTP {resp.status}")
-        except Exception as exc:
-            logger.error(f"[Callback] POST failed: {exc}")
+    # If candidate already in room (rare but possible), greet immediately
+    if room.remote_participants:
+        asyncio.ensure_future(greet())
 
+    # Keep alive for interview duration
+    await asyncio.sleep(MAX_DURATION)
+    logger.info("[Bot] Max duration reached, disconnecting")
+    await room.disconnect()
 
-# ══════════════════════════════════════════════════════════════════════════════
-# System Prompt
-# ══════════════════════════════════════════════════════════════════════════════
-
-def build_system_prompt(cfg: BotConfig) -> str:
-    questions_block = "\n".join(
-        f"  Q{i+1}: {q}" for i, q in enumerate(cfg.questions)
-    ) or "  (No specific questions — conduct a general competency interview)"
-
-    return f"""You are Alex, a professional and warm AI interviewer representing {cfg.company_name}.
-
-You are interviewing {cfg.candidate_name} for the position of **{cfg.job_title}**.
-
-## Interview Questions (ask in order, one at a time)
-{questions_block}
-
-## Conduct Rules
-1. Open with a warm welcome, introduce yourself as Alex, and briefly explain the format (AI interview, recorded, results shared with HR).
-2. Ask questions ONE AT A TIME — never bundle two questions together.
-3. After each answer, give a brief natural acknowledgement (1 sentence), then proceed to the next question.
-4. If an answer is very short or unclear, ask exactly ONE follow-up before moving on.
-5. Allow the candidate to finish speaking fully — do not interrupt.
-6. Keep your own responses SHORT (2–4 sentences maximum) — this is a spoken conversation.
-7. Do NOT use markdown, bullet points, numbered lists, or special characters in your speech.
-8. Be encouraging, professional, and empathetic throughout.
-9. After ALL questions are answered, thank {cfg.candidate_name} sincerely, explain that HR will be in touch by email with next steps, and say a warm goodbye.
-10. CRITICAL — after your closing goodbye message, append exactly this token: INTERVIEW_COMPLETE
-
-## Interruption Handling
-If the candidate interrupts you or starts speaking while you are talking, stop speaking immediately and listen. This is a natural conversation.
-
-## Time Constraint
-The total interview must not exceed {cfg.max_duration_seconds // 60} minutes. If time is running short, gracefully consolidate remaining questions.
-
-Begin now by greeting {cfg.candidate_name} and asking the first question."""
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Pipeline
-# ══════════════════════════════════════════════════════════════════════════════
-
-async def run_bot(cfg: BotConfig):
-    logger.info(f"[Bot] Starting for application={cfg.application_id} round={cfg.round_id}")
-    logger.info(f"[Bot] Candidate: {cfg.candidate_name} | Role: {cfg.job_title}")
-    logger.info(f"[Bot] LiveKit room: {cfg.livekit_room_name} @ {cfg.livekit_url}")
-
-    # ── Transport — LiveKit (audio-only for reliability) ──────────────────────
-    transport = LiveKitTransport(
-        url=cfg.livekit_url,
-        token=cfg.livekit_bot_token,
-        room_name=cfg.livekit_room_name,
-        params=LiveKitParams(
-            audio_in_enabled=True,
-            audio_out_enabled=True,
-            vad_enabled=True,
-            vad_audio_passthrough=True,
-        ),
-    )
-
-    # ── STT — Deepgram nova-2 ─────────────────────────────────────────────────
-    stt = DeepgramSTTService(
-        api_key=cfg.deepgram_api_key,
-        live_options={
-            "language": "en-US",
-            "model": "nova-2",
-            "punctuate": True,
-            "smart_format": True,
-            "endpointing": 300,         # 300 ms silence = end of utterance
-            "interim_results": True,
-        },
-    )
-
-    # ── LLM — Gemini 1.5 Flash (FREE tier) ───────────────────────────────────
-    llm = GoogleLLMService(
-        api_key=cfg.gemini_api_key,
-        model="gemini-1.5-flash",
-        params=GoogleLLMService.InputParams(
-            max_tokens=512,
-            temperature=0.7,
-        ),
-    )
-
-    # ── TTS — ElevenLabs turbo-v2.5 (low latency) ────────────────────────────
-    tts = ElevenLabsTTSService(
-        api_key=cfg.elevenlabs_api_key,
-        voice_id=cfg.elevenlabs_voice_id,
-        model="eleven_turbo_v2_5",
-        output_format="pcm_16000",
-    )
-
-    # ── Context ───────────────────────────────────────────────────────────────
-    context = OpenAILLMContext(
-        messages=[],
-        system=build_system_prompt(cfg),
-    )
-    context_aggregator = llm.create_context_aggregator(context)
-
-    # ── Custom processors ─────────────────────────────────────────────────────
-    collector = TranscriptCollector()
-    detector  = EndInterviewDetector(cfg, collector)
-
-    # ── Pipeline assembly ─────────────────────────────────────────────────────
-    #
-    #  LiveKit audio in
-    #    → Deepgram STT
-    #    → TranscriptCollector      (captures candidate speech)
-    #    → LLM user aggregator      (builds message for Gemini)
-    #    → Gemini 1.5 Flash         (generates response)
-    #    → EndInterviewDetector     (watches for INTERVIEW_COMPLETE sentinel)
-    #    → ElevenLabs TTS           (text → audio)
-    #    → Simli                    (audio → lip-sync video)
-    #    → LiveKit audio + video out
-    #    → LLM assistant aggregator (closes the conversation turn)
-    #
-    pipeline = Pipeline([
-        transport.input(),
-        stt,
-        collector,
-        context_aggregator.user(),
-        llm,
-        detector,
-        tts,
-        transport.output(),
-        context_aggregator.assistant(),
-    ])
-
-    task = PipelineTask(
-        pipeline,
-        PipelineParams(
-            allow_interruptions=True,       # Candidate barge-in handled naturally
-            enable_metrics=True,
-            enable_usage_metrics=True,
-        ),
-    )
-
-    # Wire the task reference into the detector so it can queue EndFrame
-    detector.set_task(task)
-
-    # ── Event handlers ────────────────────────────────────────────────────────
-
-    @transport.event_handler("on_participant_connected")
-    async def on_participant_connected(transport, participant):
-        # Fires when the CANDIDATE joins (bot is already in the room)
-        # participant may be a dict or object depending on pipecat version
-        identity = (
-            participant.get("identity", participant.get("id", "unknown"))
-            if isinstance(participant, dict)
-            else getattr(participant, "identity", str(participant))
-        )
-        logger.info(f"[Transport] Participant connected: {identity}")
-        # Trigger the opening greeting
-        await task.queue_frames([context_aggregator.user().get_context_frame()])
-
-    @transport.event_handler("on_participant_disconnected")
-    async def on_participant_disconnected(transport, participant):
-        identity = (
-            participant.get("identity", "unknown")
-            if isinstance(participant, dict)
-            else getattr(participant, "identity", str(participant))
-        )
-        logger.info(f"[Transport] Participant disconnected: {identity}")
-        # Save partial transcript if interview didn't complete normally
-        if not detector._triggered:
-            logger.info("[Transport] Candidate left early — saving partial transcript")
-            asyncio.create_task(detector._finalize())
-
-    # ── Run ───────────────────────────────────────────────────────────────────
-    runner = PipelineRunner()
-    await runner.run(task)
-    logger.info("[Bot] Pipeline finished cleanly")
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Entry Point
-# ══════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-    try:
-        cfg = BotConfig()
-    except KeyError as exc:
-        logger.error(f"[Config] Missing required environment variable: {exc}")
-        sys.exit(1)
-
-    asyncio.run(run_bot(cfg))
+    asyncio.run(run_bot())
