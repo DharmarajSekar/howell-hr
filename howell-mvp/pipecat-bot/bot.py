@@ -262,7 +262,8 @@ async def run_bot():
                 # Resample from LiveKit native (48kHz) to 16kHz by taking every 3rd sample
                 raw = bytes(frame.data)
                 # LiveKit delivers audio at 48kHz 16-bit — downsample to 16kHz
-                pcm16k = bytes(raw[i*6 : i*6+2] for i in range(len(raw)//6))
+                # b''.join() required — bytes() cannot accept a generator of byte slices
+                pcm16k = b''.join(raw[i*6 : i*6+2] for i in range(len(raw)//6))
 
                 if bot_is_speaking.locked():
                     continue  # Don't capture while bot is speaking
