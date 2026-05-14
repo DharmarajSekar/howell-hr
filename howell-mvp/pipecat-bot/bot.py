@@ -5,7 +5,7 @@ Howell HR — Pipecat AI Interview Bot
 Orchestration framework : Pipecat
 WebRTC transport         : Daily.co
 Speech-to-Text           : Deepgram nova-2
-Brain / LLM              : Anthropic Claude 3.5 Sonnet  ← NO Gemini
+Brain / LLM              : Google Gemini 1.5 Flash (FREE tier)
 Text-to-Speech           : ElevenLabs turbo-v2.5
 Avatar                   : Simli real-time lip-sync
 Interruption handling    : Pipecat allow_interruptions=True + SileroVAD
@@ -17,7 +17,7 @@ Invocation (env vars set by server.py before subprocess.Popen):
   INTERVIEW_QUESTIONS  (JSON array of strings)
   MAX_DURATION_SECONDS (default 2700 = 45 min)
   HRMS_CALLBACK_URL, HRMS_CALLBACK_SECRET
-  ANTHROPIC_API_KEY
+  GEMINI_API_KEY
   ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID
   SIMLI_API_KEY, SIMLI_FACE_ID
   DEEPGRAM_API_KEY
@@ -56,7 +56,7 @@ from pipecat.processors.aggregators.openai_llm_context import (
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 # ── Pipecat services ──────────────────────────────────────────────────────────
-from pipecat.services.anthropic import AnthropicLLMService
+from pipecat.services.google import GoogleLLMService
 from pipecat.services.deepgram import DeepgramSTTService
 from pipecat.services.elevenlabs import ElevenLabsTTSService
 from pipecat.services.simli import SimliVideoService
@@ -97,8 +97,8 @@ class BotConfig:
     hrms_callback_url: str    = field(default_factory=lambda: os.environ["HRMS_CALLBACK_URL"])
     hrms_callback_secret: str = field(default_factory=lambda: os.environ["HRMS_CALLBACK_SECRET"])
 
-    # ── AI services (Claude only — NO Gemini) ────────────────────────────────
-    anthropic_api_key: str    = field(default_factory=lambda: os.environ["ANTHROPIC_API_KEY"])
+    # ── AI services — Gemini FREE tier ───────────────────────────────────────
+    gemini_api_key: str       = field(default_factory=lambda: os.environ["GEMINI_API_KEY"])
     elevenlabs_api_key: str   = field(default_factory=lambda: os.environ["ELEVENLABS_API_KEY"])
     elevenlabs_voice_id: str  = field(default_factory=lambda: os.environ.get("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM"))
     simli_api_key: str        = field(default_factory=lambda: os.environ["SIMLI_API_KEY"])
@@ -262,21 +262,16 @@ Return ONLY a valid JSON object — no markdown fences, no commentary:
         try:
             async with aiohttp.ClientSession() as session:
                 resp = await session.post(
-                    "https://api.anthropic.com/v1/messages",
+                    f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={self._config.gemini_api_key}",
                     json={
-                        "model": "claude-3-5-sonnet-20241022",
-                        "max_tokens": 2000,
-                        "messages": [{"role": "user", "content": evaluation_prompt}],
+                        "contents": [{"parts": [{"text": evaluation_prompt}]}],
+                        "generationConfig": {"maxOutputTokens": 2000, "temperature": 0.3},
                     },
-                    headers={
-                        "x-api-key": self._config.anthropic_api_key,
-                        "anthropic-version": "2023-06-01",
-                        "content-type": "application/json",
-                    },
+                    headers={"content-type": "application/json"},
                     timeout=aiohttp.ClientTimeout(total=60),
                 )
                 data = await resp.json()
-                raw = data["content"][0]["text"].strip()
+                raw = data["candidates"][0]["content"]["parts"][0]["text"].strip()
 
                 # Strip accidental markdown fences
                 if raw.startswith("```"):
@@ -408,11 +403,11 @@ async def run_bot(cfg: BotConfig):
         },
     )
 
-    # ── LLM — Claude 3.5 Sonnet (NOT Gemini) ─────────────────────────────────
-    llm = AnthropicLLMService(
-        api_key=cfg.anthropic_api_key,
-        model="claude-3-5-sonnet-20241022",
-        params=AnthropicLLMService.InputParams(
+    # ── LLM — Gemini 1.5 Flash (FREE tier) ───────────────────────────────────
+    llm = GoogleLLMService(
+        api_key=cfg.gemini_api_key,
+        model="gemini-1.5-flash",
+        params=GoogleLLMService.InputParams(
             max_tokens=512,
             temperature=0.7,
         ),
