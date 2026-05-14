@@ -217,9 +217,22 @@ export default function CandidateInterviewPage() {
         co = DailyIframe.createCallObject({ audioSource: true, videoSource: true })
         callRef.current = co
 
-        co.on('joined-meeting',         () => setStatus('waiting_for_bot'))
-        co.on('left-meeting',           () => setStatus('ended'))
-        co.on('error',                  (e: any) => { setErrorMsg(e?.errorMsg || 'Connection error'); setStatus('error') })
+        co.on('joined-meeting',         () => { console.log('[Daily] joined-meeting'); setStatus('waiting_for_bot') })
+        co.on('left-meeting',           () => {
+          console.log('[Daily] left-meeting, current status:', activeStatusRef.current)
+          // Only treat as "ended" (Interview Complete) if the interview was actually active
+          // If it fires during joining/waiting, the token/room is invalid — show error instead
+          if (activeStatusRef.current === 'active') {
+            setStatus('ended')
+          } else if (activeStatusRef.current === 'waiting_for_bot') {
+            setErrorMsg('The AI interviewer disconnected. Please generate a new link and try again.')
+            setStatus('error')
+          } else {
+            setErrorMsg('Could not connect to the interview room. Please generate a fresh link.')
+            setStatus('error')
+          }
+        })
+        co.on('error', (e: any) => { console.log('[Daily] error:', e); setErrorMsg(e?.errorMsg || 'Connection error'); setStatus('error') })
         co.on('participant-joined',     () => syncParticipants(co))
         co.on('participant-updated',    () => syncParticipants(co))
         co.on('participant-left',       () => syncParticipants(co))
