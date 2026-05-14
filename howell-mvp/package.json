@@ -9,6 +9,8 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "livekit-client": "^2.5.0",
+    "livekit-server-sdk": "^2.6.0",
     "@supabase/ssr": "^0.3.0",
     "@supabase/supabase-js": "^2.43.4",
     "clsx": "^2.1.1",
