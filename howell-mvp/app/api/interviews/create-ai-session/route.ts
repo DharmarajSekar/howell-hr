@@ -124,11 +124,14 @@ export async function POST(request: NextRequest) {
       DEEPGRAM_API_KEY:      process.env.DEEPGRAM_API_KEY!,
     }
 
+    console.log('[create-ai-session] BOT_SERVER_URL:', BOT_SERVER_URL)
+    console.log('[create-ai-session] BOT_SERVER_SECRET length:', BOT_SERVER_SECRET?.length, 'value:', BOT_SERVER_SECRET)
+
     const botRes = await fetch(`${BOT_SERVER_URL}/start`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Bot-Secret': BOT_SERVER_SECRET,
+        'X-Bot-Secret': BOT_SERVER_SECRET ?? '',
       },
       body: JSON.stringify(botPayload),
     })
