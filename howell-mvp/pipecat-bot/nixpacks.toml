@@ -3,11 +3,11 @@
 # Railway Root Directory must be set to: howell-mvp/pipecat-bot
 
 [phases.setup]
-# FFmpeg + libsndfile needed by pipecat audio pipeline
-nixPkgs = ["ffmpeg", "libsndfile"]
+# Python 3.11 + FFmpeg + libsndfile needed by pipecat audio pipeline
+nixPkgs = ["python311", "python311Packages.pip", "ffmpeg", "libsndfile"]
 
 [phases.install]
-cmds = ["pip install -r requirements.txt"]
+cmds = ["python3.11 -m pip install --upgrade pip", "python3.11 -m pip install -r requirements.txt"]
 
 [start]
-cmd = "python server.py"
+cmd = "python3.11 server.py"
