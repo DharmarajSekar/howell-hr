@@ -3,15 +3,15 @@
 Howell HR — Pipecat AI Interview Bot
 ======================================
 Orchestration framework : Pipecat
-WebRTC transport         : Daily.co
+WebRTC transport         : LiveKit (open-source, free tier)
 Speech-to-Text           : Deepgram nova-2
 Brain / LLM              : Google Gemini 1.5 Flash (FREE tier)
 Text-to-Speech           : ElevenLabs turbo-v2.5
 Avatar                   : Simli real-time lip-sync
-Interruption handling    : Daily.co built-in VAD (no external dependency)
+Interruption handling    : LiveKit VAD
 
 Invocation (env vars set by server.py before subprocess.Popen):
-  DAILY_ROOM_URL, DAILY_BOT_TOKEN
+  LIVEKIT_URL, LIVEKIT_ROOM_NAME, LIVEKIT_BOT_TOKEN
   APPLICATION_ID, ROUND_ID
   CANDIDATE_NAME, JOB_TITLE, COMPANY_NAME
   INTERVIEW_QUESTIONS  (JSON array of strings)
@@ -60,8 +60,8 @@ from pipecat.services.deepgram import DeepgramSTTService
 from pipecat.services.elevenlabs import ElevenLabsTTSService
 from pipecat.services.simli import SimliVideoService
 
-# ── Pipecat transport ─────────────────────────────────────────────────────────
-from pipecat.transports.services.daily import DailyParams, DailyTransport
+# ── Pipecat transport — LiveKit (open-source) ─────────────────────────────────
+from pipecat.transports.services.livekit import LiveKitParams, LiveKitTransport
 
 load_dotenv()
 
@@ -79,9 +79,10 @@ logger = logging.getLogger("howell-bot")
 
 @dataclass
 class BotConfig:
-    # ── Daily ─────────────────────────────────────────────────────────────────
-    room_url: str             = field(default_factory=lambda: os.environ["DAILY_ROOM_URL"])
-    bot_token: str            = field(default_factory=lambda: os.environ["DAILY_BOT_TOKEN"])
+    # ── LiveKit ───────────────────────────────────────────────────────────────
+    livekit_url: str       = field(default_factory=lambda: os.environ["LIVEKIT_URL"])
+    livekit_room_name: str = field(default_factory=lambda: os.environ["LIVEKIT_ROOM_NAME"])
+    livekit_bot_token: str = field(default_factory=lambda: os.environ["LIVEKIT_BOT_TOKEN"])
 
     # ── Interview context ─────────────────────────────────────────────────────
     application_id: str       = field(default_factory=lambda: os.environ["APPLICATION_ID"])
@@ -96,7 +97,7 @@ class BotConfig:
     hrms_callback_url: str    = field(default_factory=lambda: os.environ["HRMS_CALLBACK_URL"])
     hrms_callback_secret: str = field(default_factory=lambda: os.environ["HRMS_CALLBACK_SECRET"])
 
-    # ── AI services — Gemini FREE tier ───────────────────────────────────────
+    # ── AI services ───────────────────────────────────────────────────────────
     gemini_api_key: str       = field(default_factory=lambda: os.environ["GEMINI_API_KEY"])
     elevenlabs_api_key: str   = field(default_factory=lambda: os.environ["ELEVENLABS_API_KEY"])
     elevenlabs_voice_id: str  = field(default_factory=lambda: os.environ.get("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM"))
@@ -167,7 +168,7 @@ class EndInterviewDetector(FrameProcessor):
 
     When detected:
       1. Strips sentinel from frame so it is not spoken aloud.
-      2. Asynchronously calls Claude to evaluate the transcript.
+      2. Asynchronously calls Gemini to evaluate the transcript.
       3. POSTs the evaluation + transcript to the HRMS callback URL.
       4. Queues an EndFrame to cleanly shut down the pipeline.
     """
@@ -214,10 +215,10 @@ class EndInterviewDetector(FrameProcessor):
         if self._task_ref:
             await self._task_ref.queue_frame(EndFrame())
 
-    # ── Evaluation via Claude 3.5 Sonnet (NOT Gemini) ─────────────────────────
+    # ── Evaluation via Gemini 1.5 Flash ───────────────────────────────────────
 
     async def _evaluate(self, transcript: List[Dict]) -> Dict[str, Any]:
-        logger.info("[Evaluate] Calling Claude 3.5 Sonnet for structured evaluation…")
+        logger.info("[Evaluate] Calling Gemini for structured evaluation…")
 
         formatted_transcript = "\n".join(
             f"[{t['role'].upper()}]: {t['text']}" for t in transcript
@@ -282,7 +283,7 @@ Return ONLY a valid JSON object — no markdown fences, no commentary:
                 return json.loads(raw.strip())
 
         except Exception as exc:
-            logger.error(f"[Evaluate] Error calling Claude: {exc}")
+            logger.error(f"[Evaluate] Error calling Gemini: {exc}")
             return {
                 "overallScore": 0,
                 "recommendation": "maybe",
@@ -369,14 +370,14 @@ Begin now by greeting {cfg.candidate_name} and asking the first question."""
 async def run_bot(cfg: BotConfig):
     logger.info(f"[Bot] Starting for application={cfg.application_id} round={cfg.round_id}")
     logger.info(f"[Bot] Candidate: {cfg.candidate_name} | Role: {cfg.job_title}")
-    logger.info(f"[Bot] Room: {cfg.room_url}")
+    logger.info(f"[Bot] LiveKit room: {cfg.livekit_room_name} @ {cfg.livekit_url}")
 
-    # ── Transport ──────────────────────────────────────────────────────────────
-    transport = DailyTransport(
-        cfg.room_url,
-        cfg.bot_token,
-        "Alex (AI Interviewer)",
-        DailyParams(
+    # ── Transport — LiveKit ────────────────────────────────────────────────────
+    transport = LiveKitTransport(
+        url=cfg.livekit_url,
+        token=cfg.livekit_bot_token,
+        room_name=cfg.livekit_room_name,
+        params=LiveKitParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
             camera_out_enabled=True,        # Simli publishes video via this track
@@ -384,7 +385,6 @@ async def run_bot(cfg: BotConfig):
             camera_out_height=720,
             vad_enabled=True,
             vad_audio_passthrough=True,
-            transcription_enabled=False,    # We use Deepgram ourselves
         ),
     )
 
@@ -429,7 +429,7 @@ async def run_bot(cfg: BotConfig):
         max_idle_time=300,
     )
 
-    # ── Context (seeds Claude with the system prompt) ─────────────────────────
+    # ── Context ───────────────────────────────────────────────────────────────
     context = OpenAILLMContext(
         messages=[],
         system=build_system_prompt(cfg),
@@ -442,15 +442,15 @@ async def run_bot(cfg: BotConfig):
 
     # ── Pipeline assembly ─────────────────────────────────────────────────────
     #
-    #  Daily audio in
+    #  LiveKit audio in
     #    → Deepgram STT
     #    → TranscriptCollector      (captures candidate speech)
-    #    → LLM user aggregator      (builds message for Claude)
-    #    → Claude 3.5 Sonnet        (generates response)
+    #    → LLM user aggregator      (builds message for Gemini)
+    #    → Gemini 1.5 Flash         (generates response)
     #    → EndInterviewDetector     (watches for INTERVIEW_COMPLETE sentinel)
     #    → ElevenLabs TTS           (text → audio)
     #    → Simli                    (audio → lip-sync video)
-    #    → Daily audio + video out
+    #    → LiveKit audio + video out
     #    → LLM assistant aggregator (closes the conversation turn)
     #
     pipeline = Pipeline([
@@ -480,15 +480,27 @@ async def run_bot(cfg: BotConfig):
 
     # ── Event handlers ────────────────────────────────────────────────────────
 
-    @transport.event_handler("on_first_participant_joined")
-    async def on_first_participant_joined(transport, participant):
-        logger.info(f"[Transport] Candidate joined: {participant.get('user_name', participant.get('id'))}")
-        # Trigger Claude to deliver its opening greeting
+    @transport.event_handler("on_participant_connected")
+    async def on_participant_connected(transport, participant):
+        # Fires when the CANDIDATE joins (bot is already in the room)
+        # participant may be a dict or object depending on pipecat version
+        identity = (
+            participant.get("identity", participant.get("id", "unknown"))
+            if isinstance(participant, dict)
+            else getattr(participant, "identity", str(participant))
+        )
+        logger.info(f"[Transport] Participant connected: {identity}")
+        # Trigger the opening greeting
         await task.queue_frames([context_aggregator.user().get_context_frame()])
 
-    @transport.event_handler("on_participant_left")
-    async def on_participant_left(transport, participant, reason):
-        logger.info(f"[Transport] Participant left — reason: {reason}")
+    @transport.event_handler("on_participant_disconnected")
+    async def on_participant_disconnected(transport, participant):
+        identity = (
+            participant.get("identity", "unknown")
+            if isinstance(participant, dict)
+            else getattr(participant, "identity", str(participant))
+        )
+        logger.info(f"[Transport] Participant disconnected: {identity}")
         # Save partial transcript if interview didn't complete normally
         if not detector._triggered:
             logger.info("[Transport] Candidate left early — saving partial transcript")

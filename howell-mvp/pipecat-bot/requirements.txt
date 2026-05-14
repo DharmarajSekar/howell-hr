@@ -1,7 +1,10 @@
 # Pipecat core + required service integrations
-# NO silero (PyTorch 2GB) — using Daily built-in VAD instead
-# NO webrtcvad — not needed without external VAD
-pipecat-ai[daily,google,deepgram,elevenlabs,simli]>=0.0.47
+# WebRTC transport: LiveKit (open-source, free cloud tier — no credit card)
+# NO silero (PyTorch 2GB) — using LiveKit built-in VAD instead
+pipecat-ai[livekit,google,deepgram,elevenlabs,simli]>=0.0.47
+
+# LiveKit Python SDK (room/token management used by bot)
+livekit-api>=0.7.0
 
 # HTTP server (bot launcher)
 fastapi>=0.111.0

@@ -4,7 +4,7 @@ import {
   Calendar, Clock, Video, Users, Star, Bot, CheckCircle, XCircle,
   Zap, Settings, ExternalLink, RefreshCw, ChevronRight, AlertCircle,
   Trophy, ThumbsUp, ThumbsDown, Minus, MessageSquare, Sparkles,
-  Loader2, Phone, X, Copy, Send,
+  Loader2, Phone, X,
 } from 'lucide-react'
 import { formatDateTime } from '@/lib/utils'
 import type { Interview } from '@/types'
@@ -29,7 +29,6 @@ interface AISession {
   id: string
   status: string
   tavus_conversation_url: string | null
-  recording_url: string | null
   ai_score: number | null
   recommendation: string | null
   scheduled_at: string | null
@@ -252,7 +251,7 @@ function FeedbackModal({ interview, onClose, onSaved }: {
   )
 }
 
-/* ── Pipeline-Aware Scheduler Modal ──────────────────────────────────────── */
+/* ── Inline Scheduler Modal ───────────────────────────────────────────────── */
 function InlineSchedulerModal({ application, onClose, onScheduled }: {
   application: any
   onClose: () => void
@@ -260,279 +259,132 @@ function InlineSchedulerModal({ application, onClose, onScheduled }: {
 }) {
   const candidate = application.candidate
   const job       = application.job
-  const today     = new Date().toISOString().split('T')[0]
+  const tomorrow  = new Date(Date.now() + 86400000).toISOString().split('T')[0]
 
-  // Pipeline rounds from config
-  const [rounds,        setRounds]        = useState<any[]>([])
-  const [selectedRound, setSelectedRound] = useState<any | null>(null)
-  const [loadingRounds, setLoadingRounds] = useState(true)
+  const [form, setForm] = useState({
+    date:         tomorrow,
+    time:         '10:00',
+    duration:     60,
+    type:         'video' as 'video' | 'in_person' | 'phone',
+    meeting_link: 'https://meet.google.com/new',
+    notes:        '',
+  })
+  const [saving, setSaving] = useState(false)
 
-  // Manual/panel form
-  const [form, setForm] = useState({ date: today, time: '10:00', interviewerEmails: '' })
+  function set(k: string, v: any) { setForm(f => ({ ...f, [k]: v })) }
 
-  // Link generation
-  const [generatedLink, setGeneratedLink] = useState('')
-  const [copied,        setCopied]        = useState(false)
-  const [saving,        setSaving]        = useState(false)
-  const [error,         setError]         = useState<string | null>(null)
-  const [success,       setSuccess]       = useState(false)
-
-  // Fetch rounds for the job's pipeline config
-  useEffect(() => {
-    const jobId = application.job_id || job?.id
-    if (!jobId) { setLoadingRounds(false); return }
-    fetch(`/api/interviews/config?jobId=${jobId}`)
-      .then(r => r.json())
-      .then(data => {
-        const list: any[] = (data.rounds || data.defaults?.rounds || [])
-          .sort((a: any, b: any) => a.round_number - b.round_number)
-        setRounds(list)
-        setSelectedRound(list[0] || null)
-      })
-      .catch(() => {})
-      .finally(() => setLoadingRounds(false))
-  }, [application.job_id, job?.id])
-
-  const isAI = selectedRound?.type === 'ai'
-
-  function setField(k: string, v: any) { setForm(f => ({ ...f, [k]: v })) }
-
-  // ── AI round: start bot + get candidate link ──────────────────────────────
-  async function handleGenerateAI() {
-    if (!selectedRound) return
-    setSaving(true); setError(null)
-    try {
-      const res  = await fetch('/api/interviews/create-ai-session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          applicationId:   application.id,
-          roundId:         selectedRound.id,
-          candidateName:   candidate?.full_name,
-          jobTitle:        job?.title,
-          questions:       selectedRound.ai_questions || [],
-          durationMinutes: selectedRound.duration_minutes || 60,
-        }),
-      })
-      const data = await res.json()
-      if (!res.ok || data.error) throw new Error(data.error || 'Failed to start bot session')
-      setGeneratedLink(data.candidateLink)
-      setSuccess(true)
-      navigator.clipboard.writeText(data.candidateLink).catch(() => {})
-    } catch (err: any) {
-      setError(err.message)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  // ── Manual / Panel round: create Daily room + return meeting link ─────────
-  async function handleScheduleManual(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!selectedRound) return
-    setSaving(true); setError(null)
-    try {
-      const scheduledAt = new Date(`${form.date}T${form.time}:00`).toISOString()
-      const emails      = form.interviewerEmails.split(',').map(s => s.trim()).filter(Boolean)
-      const res  = await fetch('/api/interviews/create-manual-session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          applicationId:     application.id,
-          roundId:           selectedRound.id,
-          roundType:         selectedRound.type,
-          interviewerEmails: emails,
-          scheduledAt,
-          durationMinutes:   selectedRound.duration_minutes || 60,
-        }),
-      })
-      const data = await res.json()
-      if (!res.ok || data.error) throw new Error(data.error || 'Failed to create meeting room')
-      setGeneratedLink(data.meetingLink)
-      setSuccess(true)
-      navigator.clipboard.writeText(data.meetingLink).catch(() => {})
-    } catch (err: any) {
-      setError(err.message)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  function copyLink() {
-    navigator.clipboard.writeText(generatedLink).then(() => {
-      setCopied(true); setTimeout(() => setCopied(false), 3000)
+    setSaving(true)
+    const scheduled_at = new Date(`${form.date}T${form.time}:00`).toISOString()
+    await fetch('/api/interviews', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        application_id:   application.id,
+        scheduled_at,
+        duration_minutes: form.duration,
+        interview_type:   form.type,
+        meeting_link:     form.type === 'video' ? form.meeting_link : null,
+        notes:            form.notes,
+        candidate_name:   candidate?.full_name,
+        candidate_email:  candidate?.email,
+        candidate_phone:  candidate?.phone,
+        job_title:        job?.title,
+      }),
     })
+    setSaving(false)
+    onScheduled()
   }
 
   return (
     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
-
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 sticky top-0 bg-white z-10">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
           <div className="flex items-center gap-2">
-            {isAI
-              ? <Bot size={16} className="text-violet-600"/>
-              : <Calendar size={16} className="text-red-600"/>}
-            <span className="font-bold text-gray-900 text-sm">
-              {isAI ? 'Generate AI Interview Link' : 'Schedule Interview'}
-            </span>
+            <Calendar size={16} className="text-red-600" />
+            <span className="font-bold text-gray-900 text-sm">Schedule Interview</span>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={18}/></button>
         </div>
-
-        <div className="p-6 space-y-4">
-
-          {/* Candidate info */}
-          <div className="bg-gray-50 rounded-xl p-3">
-            <div className="font-semibold text-gray-900 text-sm">{candidate?.full_name}</div>
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          <div className="bg-gray-50 rounded-xl p-3 text-sm">
+            <div className="font-semibold text-gray-900">{candidate?.full_name}</div>
             <div className="text-xs text-gray-500 mt-0.5">{job?.title}</div>
-            {candidate?.email && <div className="text-xs text-gray-400">{candidate.email}</div>}
           </div>
 
-          {/* Round selector (from pipeline config) */}
-          {loadingRounds ? (
-            <div className="flex items-center justify-center gap-2 py-3 text-xs text-gray-400">
-              <Loader2 size={13} className="animate-spin"/> Loading pipeline rounds…
-            </div>
-          ) : rounds.length > 0 ? (
-            <div>
-              <label className="block text-xs font-semibold text-gray-600 mb-2">Select Interview Round</label>
-              <div className="space-y-2">
-                {rounds.map(r => (
-                  <button key={r.id || r.round_number} type="button"
-                    onClick={() => { setSelectedRound(r); setSuccess(false); setGeneratedLink(''); setError(null) }}
-                    className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl border-2 text-sm transition ${
-                      selectedRound?.id === r.id || selectedRound?.round_number === r.round_number
-                        ? 'border-violet-500 bg-violet-50'
-                        : 'border-gray-200 hover:border-gray-300'
-                    }`}>
-                    <div className="flex items-center gap-2.5">
-                      {r.type === 'ai'
-                        ? <Bot size={14} className="text-violet-600 flex-shrink-0"/>
-                        : <Users size={14} className="text-blue-500 flex-shrink-0"/>}
-                      <div className="text-left">
-                        <div className="font-medium text-gray-800 text-xs">Round {r.round_number}: {r.name}</div>
-                        <div className="text-[10px] text-gray-400">{r.duration_minutes} min · pass ≥ {r.pass_score_threshold}</div>
-                      </div>
-                    </div>
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-semibold flex-shrink-0 ${
-                      r.type === 'ai'    ? 'bg-violet-100 text-violet-700' :
-                      r.type === 'panel' ? 'bg-blue-100 text-blue-700' :
-                                           'bg-gray-100 text-gray-600'
-                    }`}>
-                      {r.type === 'ai' ? '🤖 AI' : r.type === 'panel' ? '👥 Panel' : '👤 Manual'}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-700">
-              No interview rounds configured for this job.{' '}
-              <Link href="/settings/interview-config" className="underline font-semibold">Set up pipeline →</Link>
-            </div>
-          )}
-
-          {/* ── Success: generated link ──────────────────────────────────── */}
-          {success && generatedLink && (
-            <div className="bg-green-50 border border-green-200 rounded-xl p-4 space-y-3">
-              <div className="flex items-center gap-2 text-green-700 font-semibold text-sm">
-                <CheckCircle size={15}/>
-                {isAI ? 'AI Interview Ready — Link Generated!' : 'Meeting Room Created!'}
-              </div>
-              <div className="bg-white border border-green-200 rounded-lg px-3 py-2 text-xs text-gray-700 font-mono break-all leading-relaxed">
-                {generatedLink}
-              </div>
-              <div className="flex gap-2">
-                <button onClick={copyLink}
-                  className={`flex-1 flex items-center justify-center gap-1.5 text-xs py-2 rounded-lg font-semibold transition ${
-                    copied ? 'bg-green-200 text-green-800' : 'bg-green-600 text-white hover:bg-green-700'
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-2">Interview Type</label>
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { value: 'video',     label: 'Video Call', icon: Video },
+                { value: 'in_person', label: 'In-Person',  icon: Users },
+                { value: 'phone',     label: 'Phone',      icon: Phone },
+              ].map(opt => (
+                <button key={opt.value} type="button" onClick={() => set('type', opt.value)}
+                  className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border-2 text-xs font-medium transition ${
+                    form.type === opt.value ? 'border-red-600 bg-red-50 text-red-700' : 'border-gray-200 text-gray-600 hover:border-gray-300'
                   }`}>
-                  {copied ? <><CheckCircle size={12}/> Copied!</> : <><Copy size={12}/> Copy Link</>}
+                  <opt.icon size={16}/>{opt.label}
                 </button>
-                <button onClick={onScheduled}
-                  className="flex-1 border border-gray-200 text-gray-600 text-xs py-2 rounded-lg font-medium hover:bg-gray-50 transition">
-                  Done
-                </button>
-              </div>
-              <p className="text-[10px] text-gray-400">
-                {isAI
-                  ? '🤖 Share with candidate — Alex (AI interviewer) will join automatically.'
-                  : '👥 Share with interviewers and candidate for the meeting.'}
-              </p>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Date</label>
+              <input type="date" value={form.date} min={tomorrow}
+                onChange={e => set('date', e.target.value)} required
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-red-400"/>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Time</label>
+              <input type="time" value={form.time}
+                onChange={e => set('time', e.target.value)} required
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-red-400"/>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Duration</label>
+            <select value={form.duration} onChange={e => set('duration', Number(e.target.value))}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-red-400">
+              <option value={30}>30 minutes</option>
+              <option value={45}>45 minutes</option>
+              <option value={60}>1 hour</option>
+              <option value={90}>1.5 hours</option>
+              <option value={120}>2 hours</option>
+            </select>
+          </div>
+
+          {form.type === 'video' && (
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Meeting Link</label>
+              <input value={form.meeting_link} onChange={e => set('meeting_link', e.target.value)}
+                placeholder="https://meet.google.com/..."
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-red-400"/>
             </div>
           )}
 
-          {/* ── Error ────────────────────────────────────────────────────── */}
-          {error && (
-            <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-xs text-red-700 flex items-start gap-2">
-              <AlertCircle size={13} className="flex-shrink-0 mt-0.5"/><span>{error}</span>
-            </div>
-          )}
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Notes (optional)</label>
+            <textarea value={form.notes} onChange={e => set('notes', e.target.value)} rows={2}
+              placeholder="Panel, focus areas…"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-red-400 resize-none"/>
+          </div>
 
-          {/* ── AI round action ──────────────────────────────────────────── */}
-          {!success && selectedRound && isAI && (
-            <div className="space-y-3">
-              <div className="bg-violet-50 border border-violet-100 rounded-xl p-3 text-xs text-violet-700 space-y-1">
-                <p className="font-semibold">🤖 How AI interview works</p>
-                <p>Pipecat starts a bot (Alex) that joins the Daily.co room, conducts the full interview using {selectedRound.ai_questions?.length || 0} configured questions, and emails the score report automatically when done.</p>
-              </div>
-              <button onClick={handleGenerateAI} disabled={saving}
-                className="w-full bg-violet-600 hover:bg-violet-700 text-white py-3 rounded-xl text-sm font-bold transition disabled:opacity-60 flex items-center justify-center gap-2">
-                {saving
-                  ? <><Loader2 size={14} className="animate-spin"/> Starting bot &amp; generating link…</>
-                  : <><Zap size={14}/> Generate AI Interview Link</>}
-              </button>
-            </div>
-          )}
-
-          {/* ── Manual / Panel round form ────────────────────────────────── */}
-          {!success && selectedRound && !isAI && (
-            <form onSubmit={handleScheduleManual} className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1">Date</label>
-                  <input type="date" value={form.date} min={today}
-                    onChange={e => setField('date', e.target.value)} required
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-red-400"/>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1">Time</label>
-                  <input type="time" value={form.time}
-                    onChange={e => setField('time', e.target.value)} required
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-red-400"/>
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1">
-                  Interviewer Email{selectedRound.type === 'panel' ? 's' : ''}
-                  <span className="text-gray-400 font-normal ml-1">(comma-separated)</span>
-                </label>
-                <input value={form.interviewerEmails}
-                  onChange={e => setField('interviewerEmails', e.target.value)}
-                  placeholder="hr@company.com, manager@company.com"
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-red-400"/>
-              </div>
-              <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 text-xs text-blue-700">
-                A Daily.co video room will be auto-created. You'll get a shareable link for all participants.
-              </div>
-              <div className="flex gap-3 pt-1">
-                <button type="button" onClick={onClose}
-                  className="flex-1 border border-gray-200 text-gray-600 py-2.5 rounded-xl text-sm font-medium hover:bg-gray-50 transition">
-                  Cancel
-                </button>
-                <button type="submit" disabled={saving}
-                  className="flex-1 bg-red-700 hover:bg-red-800 text-white py-2.5 rounded-xl text-sm font-semibold transition disabled:opacity-60 flex items-center justify-center gap-2">
-                  {saving
-                    ? <><Loader2 size={14} className="animate-spin"/> Creating room…</>
-                    : <><Video size={14}/> Create Meeting Room</>}
-                </button>
-              </div>
-            </form>
-          )}
-
-        </div>
+          <div className="flex gap-3 pt-1">
+            <button type="button" onClick={onClose}
+              className="flex-1 border border-gray-200 text-gray-600 py-2.5 rounded-xl text-sm font-medium hover:bg-gray-50 transition">
+              Cancel
+            </button>
+            <button type="submit" disabled={saving}
+              className="flex-1 bg-red-700 hover:bg-red-800 text-white py-2.5 rounded-xl text-sm font-semibold transition disabled:opacity-60 flex items-center justify-center gap-2">
+              {saving ? <><Loader2 size={14} className="animate-spin"/> Saving…</> : <><Calendar size={14}/> Schedule & Notify</>}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   )
@@ -544,7 +396,6 @@ export default function InterviewsPage() {
   const [queue,        setQueue]        = useState<QueueItem[]>([])
   const [aiSessions,   setAISessions]   = useState<AISession[]>([])
   const [pendingApps,  setPendingApps]  = useState<any[]>([])  // interview_scheduled apps with no interview entry
-  const [shortlisted,  setShortlisted]  = useState<any[]>([])  // shortlisted apps ready to be scheduled
   const [loading,      setLoading]      = useState(true)
   const [tab,          setTab]          = useState<'scheduled' | 'ai-queue' | 'ai-sessions' | 'rankings'>('scheduled')
   const [approving,    setApproving]    = useState<string | null>(null)
@@ -554,12 +405,11 @@ export default function InterviewsPage() {
   const loadAll = useCallback(async () => {
     setLoading(true)
     try {
-      const [ivRes, queueRes, sessRes, appsRes, shortRes] = await Promise.all([
+      const [ivRes, queueRes, sessRes, appsRes] = await Promise.all([
         fetch('/api/interviews').then(r => r.json()),
         fetch('/api/interviews/auto-schedule').then(r => r.json()),
         fetch('/api/interviews/ai-sessions').then(r => r.json()),
         fetch('/api/applications?status=interview_scheduled').then(r => r.json()).catch(() => []),
-        fetch('/api/applications?status=shortlisted').then(r => r.json()).catch(() => []),
       ])
       const ivList = Array.isArray(ivRes) ? ivRes : []
       setInterviews(ivList)
@@ -573,10 +423,6 @@ export default function InterviewsPage() {
         a.status === 'interview_scheduled' && !scheduledAppIds.has(a.id)
       )
       setPendingApps(pending)
-
-      // Shortlisted candidates ready to be scheduled
-      const allShortlisted = Array.isArray(shortRes) ? shortRes : (shortRes.applications || [])
-      setShortlisted(allShortlisted)
     } finally {
       setLoading(false)
     }
@@ -627,7 +473,6 @@ export default function InterviewsPage() {
           <h1 className="text-2xl font-bold text-gray-900">Interviews</h1>
           <p className="text-gray-500 text-sm mt-1">
             {upcoming.length} upcoming · {completed.length} completed
-            {shortlisted.length > 0 && <span className="text-violet-600 font-medium"> · {shortlisted.length} shortlisted</span>}
             {pendingApps.length > 0 && <span className="text-amber-600 font-medium"> · {pendingApps.length} pending scheduling</span>}
             {' · '}{queue.length} awaiting approval · {aiSessions.filter(s => s.status === 'completed' && s.ai_score !== null).length} scored
           </p>
@@ -646,7 +491,7 @@ export default function InterviewsPage() {
       {/* Tabs */}
       <div className="flex gap-1 bg-gray-100 p-1 rounded-xl mb-6 w-fit">
         {[
-          { key: 'scheduled',   label: 'Manual Interviews', count: upcoming.length + completed.length + pendingApps.length + shortlisted.length },
+          { key: 'scheduled',   label: 'Manual Interviews', count: upcoming.length + completed.length + pendingApps.length },
           { key: 'ai-queue',    label: 'AI Approval Queue', count: queue.length, highlight: queue.length > 0 },
           { key: 'ai-sessions', label: 'AI Sessions',       count: aiSessions.length },
           { key: 'rankings',    label: '🏆 Rankings',       count: aiSessions.filter(s => s.status === 'completed' && s.ai_score !== null).length },
@@ -672,44 +517,6 @@ export default function InterviewsPage() {
           {/* Manual Interviews */}
           {tab === 'scheduled' && (
             <div className="space-y-6">
-              {/* Shortlisted — ready to schedule */}
-              {shortlisted.length > 0 && (
-                <section>
-                  <div className="flex items-center gap-2 mb-3">
-                    <Star size={14} className="text-violet-500" />
-                    <h2 className="text-sm font-semibold text-violet-700 uppercase tracking-wide">
-                      Shortlisted — Ready to Schedule ({shortlisted.length})
-                    </h2>
-                  </div>
-                  <div className="bg-violet-50 border border-violet-200 rounded-xl p-3 text-xs text-violet-700 mb-3">
-                    These candidates have been shortlisted and are waiting for an interview to be scheduled.
-                  </div>
-                  <div className="space-y-3">
-                    {shortlisted.map((app: any) => (
-                      <div key={app.id} className="bg-white border border-violet-200 rounded-xl shadow-sm p-4 flex items-center justify-between gap-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 rounded-full bg-violet-100 text-violet-700 flex items-center justify-center text-sm font-bold flex-shrink-0">
-                            {(app.candidate?.full_name || '?').charAt(0)}
-                          </div>
-                          <div>
-                            <div className="font-semibold text-gray-900 text-sm">{app.candidate?.full_name || 'Unknown'}</div>
-                            <div className="text-xs text-gray-500">{app.job?.title || 'Unknown Role'}</div>
-                            {app.candidate?.email && (
-                              <div className="text-xs text-gray-400">{app.candidate.email}</div>
-                            )}
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => setScheduleApp(app)}
-                          className="flex items-center gap-1.5 text-xs bg-violet-600 hover:bg-violet-700 text-white px-3 py-1.5 rounded-lg transition font-semibold flex-shrink-0">
-                          <Calendar size={12}/> Schedule Interview
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              )}
-
               {/* Pending Scheduling section */}
               {pendingApps.length > 0 && (
                 <section>
@@ -765,7 +572,7 @@ export default function InterviewsPage() {
                   </div>
                 </section>
               )}
-              {interviews.length === 0 && pendingApps.length === 0 && shortlisted.length === 0 && (
+              {interviews.length === 0 && pendingApps.length === 0 && (
                 <div className="text-center py-16 text-gray-400 text-sm">No interviews scheduled yet.</div>
               )}
             </div>
@@ -998,8 +805,6 @@ function QueueCard({ item, approving, onApprove, onReject }: {
 
 /* ── AI Session Card ──────────────────────────────────────────────────────── */
 function AISessionCard({ session: s }: { session: AISession }) {
-  const [showVideo, setShowVideo] = useState(false)
-
   const statusMap: Record<string, { label: string; cls: string }> = {
     scheduled:   { label: 'Scheduled',  cls: 'bg-amber-100 text-amber-700' },
     in_progress: { label: 'Live',       cls: 'bg-red-100 text-red-700' },
@@ -1045,76 +850,20 @@ function AISessionCard({ session: s }: { session: AISession }) {
               </span>
             )}
           </div>
-          <div className="mt-3 flex items-center gap-2 flex-wrap">
-            {s.status === 'completed' ? (
-              <>
-                <Link href={`/pre-screen/recordings`}
-                  className="flex items-center gap-1.5 text-xs bg-violet-600 text-white px-3 py-1.5 rounded-lg hover:bg-violet-700 transition">
-                  <Video size={12}/> View Results <ChevronRight size={11}/>
-                </Link>
-                {s.recording_url && (
-                  <button
-                    onClick={() => setShowVideo(p => !p)}
-                    className="flex items-center gap-1.5 text-xs border border-violet-300 text-violet-700 bg-violet-50 hover:bg-violet-100 px-3 py-1.5 rounded-lg transition">
-                    <Video size={12}/> {showVideo ? 'Hide Recording' : 'Watch Recording'}
-                  </button>
-                )}
-              </>
-            ) : (
-              /* HR copies the candidate interview link to share */
-              <CopyLinkButton sessionId={s.id}/>
+          <div className="mt-3 flex items-center gap-2">
+            <Link href={`/interview/ai-room?sessionId=${s.id}`}
+              className="flex items-center gap-1.5 text-xs bg-violet-600 text-white px-3 py-1.5 rounded-lg hover:bg-violet-700 transition">
+              <Video size={12} /> View Session <ChevronRight size={11}/>
+            </Link>
+            {s.tavus_conversation_url && s.status !== 'completed' && (
+              <a href={s.tavus_conversation_url} target="_blank" rel="noopener noreferrer"
+                className="flex items-center gap-1.5 text-xs border border-violet-300 text-violet-600 px-3 py-1.5 rounded-lg hover:bg-violet-50 transition">
+                <ExternalLink size={12}/> Join Live
+              </a>
             )}
           </div>
-          {/* Inline video player */}
-          {showVideo && s.recording_url && (
-            <div className="mt-4 rounded-xl overflow-hidden border border-gray-200 bg-gray-900">
-              <video
-                src={s.recording_url}
-                controls
-                className="w-full max-h-64 object-contain"
-              />
-              <div className="px-3 py-2 bg-gray-800 flex items-center justify-between">
-                <p className="text-xs text-gray-400">
-                  Interview Recording · {s.application?.candidate?.full_name}
-                </p>
-                <a href={s.recording_url} download target="_blank" rel="noreferrer"
-                  className="text-xs text-violet-400 hover:text-violet-300 transition">
-                  Download ↓
-                </a>
-              </div>
-            </div>
-          )}
         </div>
       </div>
-    </div>
-  )
-}
-
-/* ── Copy Candidate Link Button ───────────────────────────────────────────── */
-function CopyLinkButton({ sessionId }: { sessionId: string }) {
-  const [copied, setCopied] = useState(false)
-
-  function copyLink() {
-    const url = `${window.location.origin}/candidate-interview?sessionId=${sessionId}`
-    navigator.clipboard.writeText(url).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 3000)
-    })
-  }
-
-  return (
-    <div className="flex items-center gap-2">
-      <button
-        onClick={copyLink}
-        className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-semibold transition
-          ${copied
-            ? 'bg-green-100 text-green-700 border border-green-300'
-            : 'bg-violet-600 hover:bg-violet-700 text-white'}`}
-      >
-        {copied ? <CheckCircle size={12}/> : <Copy size={12}/>}
-        {copied ? 'Link Copied!' : 'Copy Candidate Link'}
-      </button>
-      <span className="text-[10px] text-gray-400">Share this with the candidate</span>
     </div>
   )
 }
@@ -1227,9 +976,9 @@ function RankingsView({ sessions }: { sessions: AISession[] }) {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <Link href={`/pre-screen/recordings`}
+                        <Link href={`/interview/ai-room?sessionId=${s.id}`}
                           className="text-xs text-violet-600 hover:text-violet-800 font-semibold flex items-center gap-1 justify-end">
-                          Results <ChevronRight size={12}/>
+                          View <ChevronRight size={12}/>
                         </Link>
                       </td>
                     </tr>

@@ -1,67 +1,53 @@
 /**
  * POST /api/interviews/create-ai-session
  *
- * Creates a Daily.co room, mints tokens for both the candidate and the
+ * Creates a LiveKit room, mints tokens for both the candidate and the
  * Pipecat bot, starts the bot via the bot server, saves the session to
  * Supabase, and returns a shareable candidate link.
+ *
+ * LiveKit is open-source WebRTC — free cloud tier (50 GB/month), no credit card.
+ * Sign up at: https://cloud.livekit.io
  *
  * Called by: AI Room page (HR initiates session for a specific application)
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { AccessToken, RoomServiceClient } from 'livekit-server-sdk'
 import { createClient } from '@/lib/supabase/server'
 
-const DAILY_API_KEY  = process.env.DAILY_API_KEY!
-const DAILY_API_BASE = 'https://api.daily.co/v1'
-const BOT_SERVER_URL = process.env.BOT_SERVER_URL!           // e.g. https://your-bot.railway.app
-const BOT_SERVER_SECRET = process.env.BOT_SERVER_SECRET!
+const LIVEKIT_URL        = process.env.LIVEKIT_URL!          // wss://your-app.livekit.cloud
+const LIVEKIT_API_KEY    = process.env.LIVEKIT_API_KEY!
+const LIVEKIT_API_SECRET = process.env.LIVEKIT_API_SECRET!
+const BOT_SERVER_URL     = process.env.BOT_SERVER_URL!       // e.g. https://your-bot.railway.app
+const BOT_SERVER_SECRET  = process.env.BOT_SERVER_SECRET!
 
-// ── Daily helpers ─────────────────────────────────────────────────────────────
+// ── LiveKit helpers ───────────────────────────────────────────────────────────
 
-async function createDailyRoom(applicationId: string, durationMinutes = 90) {
-  const exp = Math.floor(Date.now() / 1000) + durationMinutes * 60
-  const res = await fetch(`${DAILY_API_BASE}/rooms`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${DAILY_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      name: `howell-interview-${applicationId}-${Date.now()}`,
-      properties: {
-        exp,
-        max_participants: 2,           // candidate + bot
-        enable_noise_cancellation_ui: true,
-        start_audio_off: false,
-        start_video_off: false,
-        sfu_switchover: 0.5,           // SFU mode for lower latency
-      },
-    }),
+async function createLiveKitRoom(roomName: string, durationMinutes: number) {
+  const svc = new RoomServiceClient(LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET)
+  await svc.createRoom({
+    name: roomName,
+    emptyTimeout: 300,                        // delete room 5 min after last participant leaves
+    maxParticipants: 10,
+    metadata: JSON.stringify({ source: 'howell-hr' }),
   })
-  const data = await res.json()
-  if (!data.url) throw new Error(`Daily room creation failed: ${JSON.stringify(data)}`)
-  return data as { name: string; url: string }
+  return roomName
 }
 
-async function createDailyToken(roomName: string, isOwner: boolean, userName?: string) {
-  const res = await fetch(`${DAILY_API_BASE}/meeting-tokens`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${DAILY_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      properties: {
-        room_name: roomName,
-        is_owner: isOwner,
-        user_name: userName,
-        exp: Math.floor(Date.now() / 1000) + 7200, // 2-hour token
-      },
-    }),
+function mintToken(roomName: string, identity: string, name: string, ttlSeconds = 7200): Promise<string> {
+  const at = new AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET, {
+    identity,
+    name,
+    ttl: ttlSeconds,
   })
-  const data = await res.json()
-  if (!data.token) throw new Error(`Daily token creation failed: ${JSON.stringify(data)}`)
-  return data.token as string
+  at.addGrant({
+    roomJoin: true,
+    room: roomName,
+    canPublish: true,
+    canSubscribe: true,
+    canPublishData: true,
+  })
+  return at.toJwt()
 }
 
 // ── Route handler ─────────────────────────────────────────────────────────────
@@ -89,13 +75,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
     }
 
-    // 1. Create Daily room ─────────────────────────────────────────────────────
-    const room = await createDailyRoom(applicationId, durationMinutes + 30)
+    // 1. Create LiveKit room ───────────────────────────────────────────────────
+    const roomName = `howell-interview-${applicationId}-${Date.now()}`
+    await createLiveKitRoom(roomName, durationMinutes + 30)
 
     // 2. Mint tokens ───────────────────────────────────────────────────────────
     const [botToken, candidateToken] = await Promise.all([
-      createDailyToken(room.name, true,  'Alex (AI Interviewer)'),
-      createDailyToken(room.name, false, candidateName),
+      mintToken(roomName, `bot-${applicationId}`,       'Alex (AI Interviewer)', (durationMinutes + 30) * 60),
+      mintToken(roomName, `candidate-${applicationId}`, candidateName,           (durationMinutes + 30) * 60),
     ])
 
     // 3. Build callback URL ────────────────────────────────────────────────────
@@ -104,8 +91,11 @@ export async function POST(request: NextRequest) {
 
     // 4. Start Pipecat bot ─────────────────────────────────────────────────────
     const botPayload = {
-      DAILY_ROOM_URL:        room.url,
-      DAILY_BOT_TOKEN:       botToken,
+      // LiveKit — replaces Daily.co fields
+      LIVEKIT_URL:           LIVEKIT_URL,
+      LIVEKIT_ROOM_NAME:     roomName,
+      LIVEKIT_BOT_TOKEN:     botToken,
+      // Interview metadata
       APPLICATION_ID:        applicationId,
       ROUND_ID:              roundId,
       CANDIDATE_NAME:        candidateName,
@@ -123,9 +113,6 @@ export async function POST(request: NextRequest) {
       SIMLI_FACE_ID:         process.env.SIMLI_FACE_ID || 'cace3ef7-a4c4-425d-a8cf-a5358eb0c427',
       DEEPGRAM_API_KEY:      process.env.DEEPGRAM_API_KEY!,
     }
-
-    console.log('[create-ai-session] BOT_SERVER_URL:', BOT_SERVER_URL)
-    console.log('[create-ai-session] BOT_SERVER_SECRET length:', BOT_SERVER_SECRET?.length, 'value:', BOT_SERVER_SECRET)
 
     const botRes = await fetch(`${BOT_SERVER_URL}/start`, {
       method: 'POST',
@@ -146,26 +133,28 @@ export async function POST(request: NextRequest) {
     await supabase.from('interview_sessions').upsert({
       application_id:  applicationId,
       round_id:        roundId,
-      daily_room_name: room.name,
-      daily_room_url:  room.url,
+      daily_room_name: roomName,          // column reused for livekit room name
+      daily_room_url:  LIVEKIT_URL,       // column reused for livekit server url
       status:          'pending',
       type:            'ai_pipecat',
       created_at:      new Date().toISOString(),
     }, { onConflict: 'application_id,round_id' })
 
     // 6. Build shareable candidate link ────────────────────────────────────────
+    // lkUrl is the LiveKit WebSocket URL — needed by the candidate's browser client
     const candidateLink =
       `${baseUrl}/candidate-interview` +
-      `?room=${encodeURIComponent(room.url)}` +
+      `?room=${encodeURIComponent(roomName)}` +
       `&token=${encodeURIComponent(candidateToken)}` +
       `&name=${encodeURIComponent(candidateName)}` +
-      `&applicationId=${encodeURIComponent(applicationId)}`
+      `&applicationId=${encodeURIComponent(applicationId)}` +
+      `&lkUrl=${encodeURIComponent(LIVEKIT_URL)}`
 
     return NextResponse.json({
       success:       true,
       candidateLink,
-      roomUrl:       room.url,
-      roomName:      room.name,
+      roomName,
+      livekitUrl:    LIVEKIT_URL,
     })
 
   } catch (error: any) {

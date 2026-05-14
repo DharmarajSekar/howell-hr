@@ -41,9 +41,10 @@ logger.info(f"[Auth] BOT_SERVER_SECRET loaded: '{BOT_SERVER_SECRET}' (len={len(B
 # ══════════════════════════════════════════════════════════════════════════════
 
 class StartBotRequest(BaseModel):
-    # Daily
-    DAILY_ROOM_URL: str
-    DAILY_BOT_TOKEN: str
+    # LiveKit (open-source WebRTC — replaces Daily.co)
+    LIVEKIT_URL: str
+    LIVEKIT_ROOM_NAME: str
+    LIVEKIT_BOT_TOKEN: str
     # Interview metadata
     APPLICATION_ID: str
     ROUND_ID: str

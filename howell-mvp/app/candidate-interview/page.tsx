@@ -1,9 +1,11 @@
 'use client'
 
 /**
- * Candidate Interview Page  — with Anti-Cheat System
- * ====================================================
- * Anti-cheat measures built in:
+ * Candidate Interview Page  — LiveKit WebRTC (open-source, free)
+ * ================================================================
+ * Replaces Daily.co with LiveKit — no payment method required.
+ *
+ * Anti-cheat measures:
  *  1. Tab / window switch detection  → warning overlay + violation log
  *  2. Fullscreen enforcement         → exits trigger warning + violation log
  *  3. Camera lock                    → camera cannot be turned off mid-interview
@@ -12,10 +14,11 @@
  *  6. All violations POSTed to /api/interviews/violations for HR review
  *
  * URL params:
- *   ?room=<daily-room-url>
+ *   ?room=<livekit-room-name>
  *   &token=<participant-token>
  *   &name=<candidate-name>
  *   &applicationId=<id>
+ *   &lkUrl=<livekit-wss-url>
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react'
@@ -41,9 +44,13 @@ interface Violation {
   count: number
 }
 
-function attachTrack(el: HTMLVideoElement | HTMLAudioElement | null, track: MediaStreamTrack | null) {
+function attachTrack(el: HTMLVideoElement | HTMLAudioElement | null, track: any) {
   if (!el || !track) return
-  el.srcObject = new MediaStream([track])
+  if (typeof track.attach === 'function') {
+    track.attach(el)
+  } else if (track.mediaStreamTrack) {
+    el.srcObject = new MediaStream([track.mediaStreamTrack])
+  }
 }
 
 // ── Warning overlay labels ─────────────────────────────────────────────────
@@ -61,7 +68,8 @@ const SILENCE_THRESHOLD  = 45   // seconds of silence before flagging
 
 export default function CandidateInterviewPage() {
   // ── URL params ─────────────────────────────────────────────────────────────
-  const [roomUrl,       setRoomUrl]       = useState<string | null>(null)
+  const [roomName,      setRoomName]      = useState<string | null>(null)
+  const [lkUrl,         setLkUrl]         = useState<string | null>(null)
   const [token,         setToken]         = useState<string | null>(null)
   const [candidateName, setCandidateName] = useState('Candidate')
   const [applicationId, setApplicationId] = useState<string | null>(null)
@@ -69,7 +77,8 @@ export default function CandidateInterviewPage() {
 
   useEffect(() => {
     const p = new URLSearchParams(window.location.search)
-    setRoomUrl(p.get('room'))
+    setRoomName(p.get('room'))
+    setLkUrl(p.get('lkUrl'))
     setToken(p.get('token'))
     setCandidateName(p.get('name') || 'Candidate')
     setApplicationId(p.get('applicationId'))
@@ -85,7 +94,7 @@ export default function CandidateInterviewPage() {
   const botVideoRef   = useRef<HTMLVideoElement>(null)
   const botAudioRef   = useRef<HTMLAudioElement>(null)
   const localVideoRef = useRef<HTMLVideoElement>(null)
-  const callRef       = useRef<any>(null)
+  const roomRef       = useRef<any>(null)   // LiveKit Room instance
 
   // ── Anti-cheat state ───────────────────────────────────────────────────────
   const [violations,        setViolations]        = useState<Violation[]>([])
@@ -174,7 +183,7 @@ export default function CandidateInterviewPage() {
     return () => document.removeEventListener('fullscreenchange', handleFsChange)
   }, [logViolation])
 
-  // ── Anti-cheat: Silence timer (reset when mic audio detected) ─────────────
+  // ── Anti-cheat: Silence timer ──────────────────────────────────────────────
   useEffect(() => {
     if (status !== 'active') {
       if (silenceTimer.current) clearInterval(silenceTimer.current)
@@ -192,7 +201,6 @@ export default function CandidateInterviewPage() {
     return () => { if (silenceTimer.current) clearInterval(silenceTimer.current) }
   }, [status, logViolation])
 
-  // Reset silence counter when mic audio is detected (proxy: mic unmuted + call active)
   useEffect(() => {
     if (!micMuted && status === 'active') {
       silenceCountRef.current = 0
@@ -200,28 +208,52 @@ export default function CandidateInterviewPage() {
     }
   }, [micMuted, status])
 
-  // ── Request fullscreen on interview start ──────────────────────────────────
+  // ── Fullscreen ─────────────────────────────────────────────────────────────
   function enterFullscreen() {
     document.documentElement.requestFullscreen?.().then(() => setIsFullscreen(true)).catch(() => {})
   }
 
-  // ── Join Daily room (only after consent is given) ─────────────────────────
+  // ── Join LiveKit room (only after consent) ─────────────────────────────────
   useEffect(() => {
-    if (!roomUrl || !consentGiven) return
-    let co: any
+    if (!roomName || !lkUrl || !token || !consentGiven) return
+
+    let room: any
 
     const join = async () => {
       setStatus('joining')
       try {
-        const { default: DailyIframe } = await import('@daily-co/daily-js')
-        co = DailyIframe.createCallObject({ audioSource: true, videoSource: true })
-        callRef.current = co
+        // Dynamic import — avoids SSR issues with the WebRTC SDK
+        const { Room, RoomEvent, Track, ConnectionState } = await import('livekit-client')
 
-        co.on('joined-meeting',         () => { console.log('[Daily] joined-meeting'); setStatus('waiting_for_bot') })
-        co.on('left-meeting',           () => {
-          console.log('[Daily] left-meeting, current status:', activeStatusRef.current)
-          // Only treat as "ended" (Interview Complete) if the interview was actually active
-          // If it fires during joining/waiting, the token/room is invalid — show error instead
+        room = new Room({
+          adaptiveStream: true,
+          dynacast: true,
+          videoCaptureDefaults: { resolution: { width: 640, height: 480, frameRate: 30 } },
+        })
+        roomRef.current = room
+
+        // ── Room events ────────────────────────────────────────────────────
+        room.on(RoomEvent.Connected, async () => {
+          console.log('[LiveKit] Connected to room')
+          setStatus('waiting_for_bot')
+
+          // Enable local camera + microphone
+          try {
+            const [camPub, micPub] = await Promise.all([
+              room.localParticipant.setCameraEnabled(true),
+              room.localParticipant.setMicrophoneEnabled(true),
+            ])
+            // Attach local camera preview
+            if (camPub?.track && localVideoRef.current) {
+              camPub.track.attach(localVideoRef.current)
+            }
+          } catch (mediaErr) {
+            console.warn('[LiveKit] Could not enable media:', mediaErr)
+          }
+        })
+
+        room.on(RoomEvent.Disconnected, (reason: any) => {
+          console.log('[LiveKit] Disconnected, reason:', reason, 'status:', activeStatusRef.current)
           if (activeStatusRef.current === 'active') {
             setStatus('ended')
           } else if (activeStatusRef.current === 'waiting_for_bot') {
@@ -232,60 +264,96 @@ export default function CandidateInterviewPage() {
             setStatus('error')
           }
         })
-        co.on('error', (e: any) => { console.log('[Daily] error:', e); setErrorMsg(e?.errorMsg || 'Connection error'); setStatus('error') })
-        co.on('participant-joined',     () => syncParticipants(co))
-        co.on('participant-updated',    () => syncParticipants(co))
-        co.on('participant-left',       () => syncParticipants(co))
-        co.on('network-quality-change', (e: any) => setNetworkQuality(e?.threshold === 'good' ? 'good' : 'poor'))
 
-        await co.join({ url: roomUrl, token: token || undefined, userName: candidateName })
+        room.on(RoomEvent.ConnectionStateChanged, (state: any) => {
+          console.log('[LiveKit] Connection state:', state)
+          if (state === ConnectionState.Reconnecting) {
+            setNetworkQuality('poor')
+          } else if (state === ConnectionState.Connected) {
+            setNetworkQuality('good')
+          }
+        })
+
+        // Bot participant joined
+        room.on(RoomEvent.ParticipantConnected, (participant: any) => {
+          console.log('[LiveKit] Participant connected:', participant.identity)
+          // If already has tracks, try to attach them
+          participant.trackPublications?.forEach((pub: any) => {
+            if (pub.isSubscribed && pub.track) {
+              handleRemoteTrack(pub.track)
+            }
+          })
+        })
+
+        // Remote track (bot video/audio) subscribed
+        room.on(RoomEvent.TrackSubscribed, (track: any, _pub: any, participant: any) => {
+          console.log('[LiveKit] Track subscribed:', track.kind, 'from', participant.identity)
+          handleRemoteTrack(track)
+        })
+
+        room.on(RoomEvent.TrackUnsubscribed, (track: any) => {
+          console.log('[LiveKit] Track unsubscribed:', track.kind)
+          if (typeof track.detach === 'function') track.detach()
+        })
+
+        // Local track published (backup: attach camera if not done via setCameraEnabled)
+        room.on(RoomEvent.LocalTrackPublished, (pub: any) => {
+          if (pub.source === Track.Source.Camera && pub.track && localVideoRef.current) {
+            pub.track.attach(localVideoRef.current)
+          }
+        })
+
+        // ── Connect ────────────────────────────────────────────────────────
+        await room.connect(lkUrl, token)
+
       } catch (err: any) {
+        console.error('[LiveKit] Error:', err)
         setErrorMsg(err?.message || 'Failed to join interview room')
         setStatus('error')
       }
     }
 
-    join()
-    return () => { co?.leave().catch(() => {}); co?.destroy().catch(() => {}) }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomUrl, consentGiven])
-
-  function syncParticipants(co: any) {
-    const participants = co.participants() as Record<string, any>
-    let botVideo: MediaStreamTrack | null   = null
-    let botAudio: MediaStreamTrack | null   = null
-    let localVideo: MediaStreamTrack | null = null
-
-    Object.values(participants).forEach((p: any) => {
-      if (p.local) {
-        localVideo = p.tracks?.video?.persistentTrack ?? null
-      } else {
-        botVideo = p.tracks?.video?.persistentTrack ?? null
-        botAudio = p.tracks?.audio?.persistentTrack ?? null
-        if (p.tracks?.video?.state === 'playable') setStatus('active')
+    function handleRemoteTrack(track: any) {
+      const kind = track.kind ?? track.source
+      if (kind === 'video' || kind === 'camera') {
+        if (botVideoRef.current) attachTrack(botVideoRef.current, track)
+        // Bot is publishing video — interview is live
+        setStatus('active')
+      } else if (kind === 'audio' || kind === 'microphone') {
+        if (botAudioRef.current) attachTrack(botAudioRef.current, track)
       }
-    })
+    }
 
-    attachTrack(botVideoRef.current,   botVideo)
-    attachTrack(botAudioRef.current,   botAudio)
-    attachTrack(localVideoRef.current, localVideo)
-  }
+    join()
 
+    return () => {
+      room?.disconnect().catch(() => {})
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomName, lkUrl, token, consentGiven])
+
+  // ── Controls ───────────────────────────────────────────────────────────────
   function toggleMic() {
-    if (!callRef.current) return
-    micMuted ? callRef.current.setLocalAudio(true) : callRef.current.setLocalAudio(false)
-    setMicMuted(p => !p)
-  }
-
-  // Camera toggle is BLOCKED during active interview
-  function handleCamToggle() {
-    if (status === 'active') {
-      logViolation('camera_disabled', 'Candidate attempted to turn camera off')
-      return
+    if (!roomRef.current) return
+    const newMuted = !micMuted
+    roomRef.current.localParticipant?.setMicrophoneEnabled(!newMuted).catch(() => {})
+    setMicMuted(newMuted)
+    if (!newMuted && status === 'active') {
+      silenceCountRef.current = 0
+      setSilenceSeconds(0)
     }
   }
 
-  function leaveCall() { callRef.current?.leave(); setStatus('ended') }
+  function handleCamToggle() {
+    if (status === 'active') {
+      logViolation('camera_disabled', 'Candidate attempted to turn camera off')
+    }
+  }
+
+  function leaveCall() {
+    roomRef.current?.disconnect().catch(() => {})
+    setStatus('ended')
+  }
 
   // ── Derived ────────────────────────────────────────────────────────────────
   const totalViolations = violations.reduce((sum, v) => sum + v.count, 0)
@@ -296,7 +364,7 @@ export default function CandidateInterviewPage() {
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // Intro / Consent screen (shown before joining)
+  // Intro / Consent screen
   // ══════════════════════════════════════════════════════════════════════════
   if (showIntroConsent && status === 'init') return (
     <div className="min-h-screen bg-gray-950 flex items-center justify-center text-white p-6">
@@ -341,9 +409,9 @@ export default function CandidateInterviewPage() {
   )
 
   // ══════════════════════════════════════════════════════════════════════════
-  // Error / Ended screens
+  // Error / Ended / Invalid-link screens
   // ══════════════════════════════════════════════════════════════════════════
-  if (!roomUrl && status === 'init') return (
+  if (!roomName && status === 'init') return (
     <div className="min-h-screen bg-gray-950 flex items-center justify-center text-white">
       <div className="text-center max-w-sm px-6">
         <div className="text-5xl mb-4">🔗</div>
@@ -404,7 +472,7 @@ export default function CandidateInterviewPage() {
         </div>
       )}
 
-      {/* ── Fullscreen nudge (if not in fullscreen during active) ─────────── */}
+      {/* ── Fullscreen nudge ──────────────────────────────────────────────── */}
       {!isFullscreen && status === 'active' && (
         <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-40 bg-yellow-900/90 border border-yellow-600 rounded-xl px-4 py-2.5 flex items-center gap-3 text-sm shadow-xl">
           <Maximize2 className="w-4 h-4 text-yellow-400 shrink-0" />
@@ -447,7 +515,7 @@ export default function CandidateInterviewPage() {
             </div>
           )}
 
-          {/* Silence timer (shows if > 10s silent) */}
+          {/* Silence timer */}
           {status === 'active' && silenceSeconds >= 10 && (
             <div className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded-full ${silenceSeconds >= SILENCE_THRESHOLD ? 'bg-red-500/20 text-red-400' : 'bg-gray-700 text-gray-400'}`}>
               <Clock className="w-3 h-3" />
@@ -500,16 +568,12 @@ export default function CandidateInterviewPage() {
               <MicOff className="w-3.5 h-3.5" />
             </div>
           )}
-          {/* Camera-off warning overlay */}
-          <div className="absolute inset-0 flex items-center justify-center bg-gray-900/0 hover:bg-gray-900/0 pointer-events-none">
-            {/* camera stays on — VideoOff button is disabled */}
-          </div>
         </div>
       </div>
 
       {/* ── Controls ──────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-center gap-4 pb-6">
-        {/* Mic toggle — allowed */}
+        {/* Mic toggle */}
         <button
           onClick={toggleMic}
           className={`w-12 h-12 rounded-full flex items-center justify-center transition-all ${micMuted ? 'bg-red-500 hover:bg-red-600' : 'bg-gray-700 hover:bg-gray-600'}`}
@@ -534,7 +598,7 @@ export default function CandidateInterviewPage() {
           )}
         </div>
 
-        {/* Fullscreen toggle */}
+        {/* Fullscreen */}
         <button
           onClick={enterFullscreen}
           className="w-12 h-12 rounded-full flex items-center justify-center transition-all bg-gray-700 hover:bg-gray-600"
