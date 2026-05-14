@@ -1,0 +1,14 @@
+# Pipecat core + all required service integrations
+# Install: pip install -r requirements.txt
+pipecat-ai[daily,anthropic,deepgram,elevenlabs,silero,simli]>=0.0.47
+
+# HTTP server (bot launcher)
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.7.0
+
+# Async HTTP (evaluation callback)
+aiohttp>=3.9.0
+
+# Environment loading
+python-dotenv>=1.0.0
