@@ -1,6 +1,8 @@
-# Pipecat core + all required service integrations
-# Install: pip install -r requirements.txt
-pipecat-ai[daily,google,deepgram,elevenlabs,silero,simli]>=0.0.47
+# Pipecat core + required service integrations
+# NOTE: silero removed — requires PyTorch (~2 GB), kills Railway builds
+# Using webrtcvad instead (lightweight, no torch dependency)
+pipecat-ai[daily,google,deepgram,elevenlabs,simli]>=0.0.47
+webrtcvad>=2.0.10
 
 # HTTP server (bot launcher)
 fastapi>=0.111.0

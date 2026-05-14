@@ -55,7 +55,7 @@ class StartBotRequest(BaseModel):
     HRMS_CALLBACK_URL: str
     HRMS_CALLBACK_SECRET: str
     # Service API keys
-    ANTHROPIC_API_KEY: str
+    GEMINI_API_KEY: str
     ELEVENLABS_API_KEY: str
     ELEVENLABS_VOICE_ID: str = "21m00Tcm4TlvDq8ikWAM"
     SIMLI_API_KEY: str
