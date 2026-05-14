@@ -75,8 +75,6 @@ export default function CandidateInterviewPage() {
   const localVideoRef  = useRef<HTMLVideoElement>(null)
   const roomRef        = useRef<any>(null)
   const simliClientRef = useRef<any>(null)
-  const audioCtxRef    = useRef<AudioContext | null>(null)
-  const processorRef   = useRef<ScriptProcessorNode | null>(null)
 
   // ── Anti-cheat state ───────────────────────────────────────────────────────
   const [violations,       setViolations]      = useState<Violation[]>([])
@@ -170,10 +168,10 @@ export default function CandidateInterviewPage() {
     document.documentElement.requestFullscreen?.().then(() => setIsFullscreen(true)).catch(() => {})
   }
 
-  // ── Initialise Simli ───────────────────────────────────────────────────────
+  // ── Initialise Simli (v3 API) ──────────────────────────────────────────────
   const initSimli = useCallback(async () => {
     try {
-      // Fetch config from our proxy (keeps API key server-side)
+      // Fetch API key + face ID from our server proxy (keeps key off the client)
       const cfgRes = await fetch('/api/interviews/simli-session')
       if (!cfgRes.ok) {
         console.warn('[Simli] Not configured — will show fallback avatar')
@@ -182,16 +180,25 @@ export default function CandidateInterviewPage() {
       const { apiKey, faceId } = await cfgRes.json()
 
       // Dynamic import — keeps bundle small and avoids SSR issues
-      const { SimliClient } = await import('simli-client')
+      const { SimliClient, generateSimliSessionToken, LogLevel } = await import('simli-client')
 
-      const client = new SimliClient()
-      client.Initialize({
+      // v3: create a session token before initialising the client
+      const tokenData = await generateSimliSessionToken({
         apiKey,
-        faceID:        faceId,
-        handleSilence: true,
-        videoRef:      simliVideoRef,
-        audioRef:      simliAudioRef,
+        faceId,
+        maxSessionLength: 3600,
+        maxIdleTime:      300,
       })
+
+      // v3 constructor: SimliClient(sessionToken, videoEl, audioEl, iceServers, logLevel, transport)
+      const client = new SimliClient(
+        tokenData.session_token,
+        simliVideoRef.current,
+        simliAudioRef.current,
+        null,           // iceServers — use Simli defaults
+        LogLevel.WARN,  // only log warnings/errors
+        'livekit',      // transport mode matching bot
+      )
 
       await client.start()
       simliClientRef.current = client
@@ -204,34 +211,14 @@ export default function CandidateInterviewPage() {
     }
   }, [])
 
-  // ── Pipe bot audio → Simli ─────────────────────────────────────────────────
+  // ── Pipe bot audio → Simli (v3: single call, no manual PCM conversion) ─────
   const pipeBotAudioToSimli = useCallback((mediaStreamTrack: MediaStreamTrack) => {
     if (!simliClientRef.current) return
-
     try {
-      const ctx = new AudioContext({ sampleRate: 16000 })
-      audioCtxRef.current = ctx
-
-      const source    = ctx.createMediaStreamSource(new MediaStream([mediaStreamTrack]))
-      const processor = ctx.createScriptProcessor(4096, 1, 1)
-      processorRef.current = processor
-
-      processor.onaudioprocess = (e) => {
-        if (!simliClientRef.current) return
-        const float32 = e.inputBuffer.getChannelData(0)
-        // Convert Float32 → PCM Int16 (what Simli expects)
-        const pcm16 = new Int16Array(float32.length)
-        for (let i = 0; i < float32.length; i++) {
-          pcm16[i] = Math.max(-32768, Math.min(32767, float32[i] * 32768))
-        }
-        simliClientRef.current.sendAudioData(new Uint8Array(pcm16.buffer))
-        setBotSpeaking(true)
-        setTimeout(() => setBotSpeaking(false), 300)
-      }
-
-      source.connect(processor)
-      processor.connect(ctx.destination)
-      console.log('[Simli] Audio pipeline connected')
+      // v3 API: pass the track directly — Simli handles PCM conversion internally
+      simliClientRef.current.listenToMediastreamTrack(mediaStreamTrack)
+      setBotSpeaking(true)
+      console.log('[Simli] Audio pipeline connected via listenToMediastreamTrack')
     } catch (err) {
       console.warn('[Simli] Audio pipeline error:', err)
     }
@@ -342,8 +329,7 @@ export default function CandidateInterviewPage() {
 
     return () => {
       room?.disconnect().catch(() => {})
-      audioCtxRef.current?.close().catch(() => {})
-      simliClientRef.current?.close?.()
+      simliClientRef.current?.stop?.()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomName, lkUrl, token, consentGiven])
