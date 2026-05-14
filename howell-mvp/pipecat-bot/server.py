@@ -32,7 +32,8 @@ app = FastAPI(title="Howell HR — Pipecat Bot Server")
 _active_bots: Dict[str, subprocess.Popen] = {}
 
 # Shared secret to authenticate calls from Next.js
-BOT_SERVER_SECRET = os.environ.get("BOT_SERVER_SECRET", "change-me-in-production")
+BOT_SERVER_SECRET = os.environ.get("BOT_SERVER_SECRET", "change-me-in-production").strip()
+logger.info(f"[Auth] BOT_SERVER_SECRET loaded: '{BOT_SERVER_SECRET}' (len={len(BOT_SERVER_SECRET)})")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -68,7 +69,8 @@ class StartBotRequest(BaseModel):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _auth(request: Request):
-    secret = request.headers.get("X-Bot-Secret", "")
+    secret = request.headers.get("X-Bot-Secret", "").strip()
+    logger.info(f"[Auth] Incoming: '{secret}' (len={len(secret)}) | Expected: '{BOT_SERVER_SECRET}' (len={len(BOT_SERVER_SECRET)}) | Match: {secret == BOT_SERVER_SECRET}")
     if secret != BOT_SERVER_SECRET:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
