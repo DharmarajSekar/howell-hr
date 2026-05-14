@@ -8,7 +8,7 @@ Speech-to-Text           : Deepgram nova-2
 Brain / LLM              : Google Gemini 1.5 Flash (FREE tier)
 Text-to-Speech           : ElevenLabs turbo-v2.5
 Avatar                   : Simli real-time lip-sync
-Interruption handling    : Pipecat allow_interruptions=True + WebRTCVAD
+Interruption handling    : Daily.co built-in VAD (no external dependency)
 
 Invocation (env vars set by server.py before subprocess.Popen):
   DAILY_ROOM_URL, DAILY_BOT_TOKEN
@@ -36,7 +36,6 @@ import aiohttp
 from dotenv import load_dotenv
 
 # ── Pipecat core ──────────────────────────────────────────────────────────────
-from pipecat.audio.vad.webrtc import WebRTCVADAnalyzer
 from pipecat.frames.frames import (
     EndFrame,
     Frame,
@@ -384,7 +383,6 @@ async def run_bot(cfg: BotConfig):
             camera_out_width=1280,
             camera_out_height=720,
             vad_enabled=True,
-            vad_analyzer=WebRTCVADAnalyzer(),
             vad_audio_passthrough=True,
             transcription_enabled=False,    # We use Deepgram ourselves
         ),

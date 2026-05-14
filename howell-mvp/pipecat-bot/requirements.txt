@@ -1,8 +1,8 @@
 # Pipecat core + required service integrations
-# NOTE: silero removed — requires PyTorch (~2 GB), kills Railway builds
-# Using webrtcvad instead (lightweight, no torch dependency)
-pipecat-ai[daily,google,deepgram,elevenlabs,simli]>=0.0.47
-webrtcvad>=2.0.10
+# Pinned to 0.0.60 — stable, known-good version
+# NO silero (PyTorch 2GB) — using Daily built-in VAD instead
+# NO webrtcvad — not needed without external VAD
+pipecat-ai[daily,google,deepgram,elevenlabs,simli]==0.0.60
 
 # HTTP server (bot launcher)
 fastapi>=0.111.0
