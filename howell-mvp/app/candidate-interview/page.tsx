@@ -73,6 +73,7 @@ export default function CandidateInterviewPage() {
   const simliVideoRef  = useRef<HTMLVideoElement>(null)
   const simliAudioRef  = useRef<HTMLAudioElement>(null)
   const localVideoRef  = useRef<HTMLVideoElement>(null)
+  const botAudioRef    = useRef<HTMLAudioElement>(null)   // direct bot audio fallback
   const roomRef        = useRef<any>(null)
   const simliClientRef = useRef<any>(null)
 
@@ -190,9 +191,13 @@ export default function CandidateInterviewPage() {
         maxIdleTime:      300,
       })
 
+      // Handle both snake_case and camelCase response formats
+      const sessionToken = tokenData?.session_token || tokenData?.sessionToken
+      if (!sessionToken) throw new Error('No session token returned from Simli')
+
       // v3 constructor: SimliClient(sessionToken, videoEl, audioEl, iceServers, logLevel, transport)
       const client = new SimliClient(
-        tokenData.session_token,
+        sessionToken,
         simliVideoRef.current,
         simliAudioRef.current,
         null,           // iceServers — use Simli defaults
@@ -307,20 +312,42 @@ export default function CandidateInterviewPage() {
       console.log('[LiveKit] Handling remote track:', kind)
 
       if (kind === 'audio' || kind === 'microphone') {
-        // Route bot audio to Simli for lip-sync
+        // ── Step 1: ALWAYS play bot audio directly (guaranteed audio playback) ──
+        // Use LiveKit's track.attach() — the correct way to play LiveKit audio
+        try {
+          if (typeof track.attach === 'function') {
+            // LiveKit v2 preferred method
+            if (botAudioRef.current) {
+              track.attach(botAudioRef.current)
+            } else {
+              // Dynamic fallback — create element and append to body
+              const el = document.createElement('audio')
+              el.autoplay = true
+              el.style.display = 'none'
+              document.body.appendChild(el)
+              track.attach(el)
+            }
+          } else if (track.mediaStreamTrack) {
+            // Direct MediaStreamTrack fallback
+            const el = botAudioRef.current || document.createElement('audio')
+            el.autoplay = true
+            el.srcObject = new MediaStream([track.mediaStreamTrack])
+            el.play().catch(() => {})
+            if (!botAudioRef.current) document.body.appendChild(el)
+          }
+          console.log('[Audio] Bot audio attached for playback')
+        } catch (err) {
+          console.warn('[Audio] Failed to attach bot audio:', err)
+        }
+
+        // ── Step 2: ALSO route to Simli if ready (lip-sync enhancement) ──────
         if (track.mediaStreamTrack && simliClientRef.current) {
           pipeBotAudioToSimli(track.mediaStreamTrack)
-        } else {
-          // Simli not available — play audio directly as fallback
-          if (simliAudioRef.current) {
-            const ms = new MediaStream([track.mediaStreamTrack || track])
-            simliAudioRef.current.srcObject = ms
-            simliAudioRef.current.play().catch(() => {})
-          }
         }
+
+        setBotSpeaking(true)
         setStatus('active')
       } else if (kind === 'video' || kind === 'camera') {
-        // Bot is audio-only but handle video just in case
         setStatus('active')
       }
     }
@@ -517,8 +544,10 @@ export default function CandidateInterviewPage() {
             playsInline
             className={`w-full h-full object-cover transition-opacity duration-500 ${simliReady ? 'opacity-100' : 'opacity-0'}`}
           />
-          {/* Hidden Simli audio element */}
+          {/* Hidden Simli audio element (for Simli lip-sync output) */}
           <audio ref={simliAudioRef} autoPlay style={{ display: 'none' }} />
+          {/* Hidden direct bot audio element (guaranteed playback regardless of Simli) */}
+          <audio ref={botAudioRef} autoPlay style={{ display: 'none' }} />
 
           {/* Loading / waiting state shown when Simli not ready yet */}
           {!simliReady && (
