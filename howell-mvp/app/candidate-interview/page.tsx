@@ -317,10 +317,11 @@ export default function CandidateInterviewPage() {
       const kind = track.kind ?? track.source
       if (kind === 'video' || kind === 'camera') {
         if (botVideoRef.current) attachTrack(botVideoRef.current, track)
-        // Bot is publishing video — interview is live
         setStatus('active')
       } else if (kind === 'audio' || kind === 'microphone') {
         if (botAudioRef.current) attachTrack(botAudioRef.current, track)
+        // Bot is audio-only (no Simli) — audio track = interview is live
+        setStatus('active')
       }
     }
 
@@ -528,13 +529,13 @@ export default function CandidateInterviewPage() {
       {/* ── Video area ────────────────────────────────────────────────────── */}
       <div className="flex-1 flex items-center justify-center p-6 gap-6 flex-wrap">
 
-        {/* Simli avatar (bot video) */}
-        <div className="relative bg-gray-900 rounded-2xl overflow-hidden shadow-2xl" style={{ width: 640, height: 480 }}>
-          <video ref={botVideoRef} autoPlay playsInline className="w-full h-full object-cover" />
+        {/* AI Interviewer panel — CSS animated avatar + audio */}
+        <div className="relative bg-gradient-to-b from-gray-800 to-gray-900 rounded-2xl overflow-hidden shadow-2xl flex flex-col items-center justify-center" style={{ width: 640, height: 480 }}>
           <audio ref={botAudioRef} autoPlay />
+          <audio ref={botVideoRef as any} style={{ display: 'none' }} />
 
-          {(status === 'joining' || status === 'waiting_for_bot') && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900/95">
+          {(status === 'joining' || status === 'waiting_for_bot') ? (
+            <div className="flex flex-col items-center justify-center">
               <div className="relative mb-6">
                 <div className="w-20 h-20 rounded-full bg-purple-600/30 flex items-center justify-center">
                   <div className="w-12 h-12 rounded-full bg-purple-600/50 flex items-center justify-center">
@@ -543,10 +544,24 @@ export default function CandidateInterviewPage() {
                 </div>
                 <div className="absolute inset-0 rounded-full border-2 border-purple-500 border-t-transparent animate-spin" />
               </div>
-              <p className="text-white font-medium mb-1">
-                {status === 'joining' ? 'Connecting to interview room…' : 'AI Interviewer is joining…'}
-              </p>
+              <p className="text-white font-medium mb-1">AI Interviewer is joining…</p>
               <p className="text-gray-400 text-sm">This usually takes a few seconds</p>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center gap-4">
+              {/* Animated avatar */}
+              <div className="relative">
+                <div className="w-32 h-32 rounded-full bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center shadow-2xl shadow-purple-500/40">
+                  <span className="text-5xl">🤖</span>
+                </div>
+                {/* Speaking pulse rings */}
+                <div className="absolute inset-0 rounded-full border-2 border-purple-400/60 animate-ping" style={{ animationDuration: '1.5s' }} />
+                <div className="absolute inset-[-8px] rounded-full border border-purple-400/30 animate-ping" style={{ animationDuration: '2s' }} />
+              </div>
+              <div className="text-center">
+                <p className="text-white font-semibold text-lg">Alex</p>
+                <p className="text-purple-300 text-sm">AI Interviewer · Speaking</p>
+              </div>
             </div>
           )}
 

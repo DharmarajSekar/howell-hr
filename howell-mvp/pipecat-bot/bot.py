@@ -58,7 +58,6 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.services.google import GoogleLLMService
 from pipecat.services.deepgram import DeepgramSTTService
 from pipecat.services.elevenlabs import ElevenLabsTTSService
-from pipecat.services.simli import SimliVideoService
 
 # ── Pipecat transport — LiveKit (open-source) ─────────────────────────────────
 from pipecat.transports.services.livekit import LiveKitParams, LiveKitTransport
@@ -372,7 +371,7 @@ async def run_bot(cfg: BotConfig):
     logger.info(f"[Bot] Candidate: {cfg.candidate_name} | Role: {cfg.job_title}")
     logger.info(f"[Bot] LiveKit room: {cfg.livekit_room_name} @ {cfg.livekit_url}")
 
-    # ── Transport — LiveKit ────────────────────────────────────────────────────
+    # ── Transport — LiveKit (audio-only for reliability) ──────────────────────
     transport = LiveKitTransport(
         url=cfg.livekit_url,
         token=cfg.livekit_bot_token,
@@ -380,9 +379,6 @@ async def run_bot(cfg: BotConfig):
         params=LiveKitParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
-            camera_out_enabled=True,        # Simli publishes video via this track
-            camera_out_width=1280,
-            camera_out_height=720,
             vad_enabled=True,
             vad_audio_passthrough=True,
         ),
@@ -419,16 +415,6 @@ async def run_bot(cfg: BotConfig):
         output_format="pcm_16000",
     )
 
-    # ── Avatar — Simli real-time lip-sync ─────────────────────────────────────
-    simli = SimliVideoService(
-        simli_api_key=cfg.simli_api_key,
-        face_id=cfg.simli_face_id,
-        sync_audio=True,
-        handle_silence=True,
-        max_session_length=cfg.max_duration_seconds,
-        max_idle_time=300,
-    )
-
     # ── Context ───────────────────────────────────────────────────────────────
     context = OpenAILLMContext(
         messages=[],
@@ -461,7 +447,6 @@ async def run_bot(cfg: BotConfig):
         llm,
         detector,
         tts,
-        simli,
         transport.output(),
         context_aggregator.assistant(),
     ])
