@@ -295,9 +295,15 @@ async def run_bot():
     await room.local_participant.publish_track(bot_track, options)
     logger.info("[Bot] Audio track published — bot is visible in room")
 
-    # If candidate already in room (rare but possible), greet immediately
+    # If candidate already in room when bot connects, greet AND subscribe to their tracks
     if room.remote_participants:
         asyncio.ensure_future(greet())
+        for participant in room.remote_participants.values():
+            logger.info(f"[Bot] Already-present participant: {participant.identity}")
+            for pub in participant.track_publications.values():
+                if pub.track and pub.track.kind == rtc.TrackKind.KIND_AUDIO:
+                    logger.info(f"[Bot] Subscribing to existing audio track from {participant.identity}")
+                    on_track_subscribed(pub.track, pub, participant)
 
     # Keep alive for interview duration
     await asyncio.sleep(MAX_DURATION)

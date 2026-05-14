@@ -148,6 +148,7 @@ export async function POST(request: NextRequest) {
       `&token=${encodeURIComponent(candidateToken)}` +
       `&name=${encodeURIComponent(candidateName)}` +
       `&applicationId=${encodeURIComponent(applicationId)}` +
+      `&roundId=${encodeURIComponent(roundId)}` +
       `&lkUrl=${encodeURIComponent(LIVEKIT_URL)}`
 
     return NextResponse.json({
