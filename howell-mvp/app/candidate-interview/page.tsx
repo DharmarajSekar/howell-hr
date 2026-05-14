@@ -1,17 +1,11 @@
 'use client'
 
 /**
- * Candidate Interview Page  — LiveKit WebRTC (open-source, free)
- * ================================================================
- * Replaces Daily.co with LiveKit — no payment method required.
- *
- * Anti-cheat measures:
- *  1. Tab / window switch detection  → warning overlay + violation log
- *  2. Fullscreen enforcement         → exits trigger warning + violation log
- *  3. Camera lock                    → camera cannot be turned off mid-interview
- *  4. Paste detection                → clipboard paste during interview is flagged
- *  5. Response silence timer         → measures time from bot finishing to candidate speaking
- *  6. All violations POSTed to /api/interviews/violations for HR review
+ * Candidate Interview Page — LiveKit + Simli Humanoid Avatar
+ * ===========================================================
+ * Audio pipeline:
+ *   Railway bot → ElevenLabs TTS → LiveKit WebRTC → candidate browser
+ *   → AudioContext PCM capture → Simli.sendAudioData() → humanoid avatar video
  *
  * URL params:
  *   ?room=<livekit-room-name>
@@ -23,19 +17,13 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react'
 import {
-  Mic, MicOff, Video, VideoOff, PhoneOff,
+  Mic, MicOff, PhoneOff,
   Wifi, WifiOff, AlertTriangle, ShieldAlert,
   Maximize2, Eye, Clock
 } from 'lucide-react'
 
 type Status = 'init' | 'joining' | 'waiting_for_bot' | 'active' | 'ended' | 'error'
-
-type ViolationType =
-  | 'tab_switch'
-  | 'fullscreen_exit'
-  | 'camera_disabled'
-  | 'paste_detected'
-  | 'long_silence'
+type ViolationType = 'tab_switch' | 'fullscreen_exit' | 'camera_disabled' | 'paste_detected' | 'long_silence'
 
 interface Violation {
   type: ViolationType
@@ -44,27 +32,16 @@ interface Violation {
   count: number
 }
 
-function attachTrack(el: HTMLVideoElement | HTMLAudioElement | null, track: any) {
-  if (!el || !track) return
-  if (typeof track.attach === 'function') {
-    track.attach(el)
-  } else if (track.mediaStreamTrack) {
-    el.srcObject = new MediaStream([track.mediaStreamTrack])
-  }
-}
-
-// ── Warning overlay labels ─────────────────────────────────────────────────
 const VIOLATION_META: Record<ViolationType, { title: string; desc: string; icon: string }> = {
-  tab_switch:       { icon: '⚠️', title: 'Tab Switch Detected',    desc: 'Switching tabs or windows during the interview is not allowed and has been flagged.' },
-  fullscreen_exit:  { icon: '⚠️', title: 'Fullscreen Required',    desc: 'Please stay in fullscreen mode throughout the interview. Exiting has been flagged.' },
-  camera_disabled:  { icon: '⚠️', title: 'Camera Must Stay On',    desc: 'You cannot turn your camera off during the interview.' },
-  paste_detected:   { icon: '⚠️', title: 'Paste Activity Detected', desc: 'Copy-paste activity has been detected and flagged for HR review.' },
-  long_silence:     { icon: '⏱️', title: 'Long Silence Detected',  desc: 'An unusually long silence was detected after a question. This has been logged.' },
+  tab_switch:      { icon: '⚠️', title: 'Tab Switch Detected',     desc: 'Switching tabs during the interview is not allowed and has been flagged.' },
+  fullscreen_exit: { icon: '⚠️', title: 'Fullscreen Required',     desc: 'Please stay in fullscreen throughout. Exiting has been flagged.' },
+  camera_disabled: { icon: '⚠️', title: 'Camera Must Stay On',     desc: 'You cannot turn your camera off during the interview.' },
+  paste_detected:  { icon: '⚠️', title: 'Paste Activity Detected', desc: 'Copy-paste activity has been detected and flagged for HR.' },
+  long_silence:    { icon: '⏱️', title: 'Long Silence Detected',   desc: 'An unusually long silence was detected after a question.' },
 }
 
-// ── Thresholds ─────────────────────────────────────────────────────────────
-const TAB_SWITCH_LIMIT   = 3    // flag as high-risk after this many tab switches
-const SILENCE_THRESHOLD  = 45   // seconds of silence before flagging
+const TAB_SWITCH_LIMIT  = 3
+const SILENCE_THRESHOLD = 45   // seconds
 
 export default function CandidateInterviewPage() {
   // ── URL params ─────────────────────────────────────────────────────────────
@@ -90,52 +67,46 @@ export default function CandidateInterviewPage() {
   const [errorMsg,       setErrorMsg]       = useState('')
   const [micMuted,       setMicMuted]       = useState(false)
   const [networkQuality, setNetworkQuality] = useState<'good' | 'poor' | 'unknown'>('unknown')
+  const [simliReady,     setSimliReady]     = useState(false)
+  const [botSpeaking,    setBotSpeaking]    = useState(false)
 
-  const botVideoRef   = useRef<HTMLVideoElement>(null)
-  const botAudioRef   = useRef<HTMLAudioElement>(null)
-  const localVideoRef = useRef<HTMLVideoElement>(null)
-  const roomRef       = useRef<any>(null)   // LiveKit Room instance
+  const simliVideoRef  = useRef<HTMLVideoElement>(null)
+  const simliAudioRef  = useRef<HTMLAudioElement>(null)
+  const localVideoRef  = useRef<HTMLVideoElement>(null)
+  const roomRef        = useRef<any>(null)
+  const simliClientRef = useRef<any>(null)
+  const audioCtxRef    = useRef<AudioContext | null>(null)
+  const processorRef   = useRef<ScriptProcessorNode | null>(null)
 
   // ── Anti-cheat state ───────────────────────────────────────────────────────
-  const [violations,        setViolations]        = useState<Violation[]>([])
-  const [activeWarning,     setActiveWarning]      = useState<ViolationType | null>(null)
-  const [riskLevel,         setRiskLevel]          = useState<'low' | 'medium' | 'high'>('low')
-  const [isFullscreen,      setIsFullscreen]       = useState(false)
-  const [silenceSeconds,    setSilenceSeconds]     = useState(0)
-  const [showIntroConsent,  setShowIntroConsent]   = useState(true)
-  const [consentGiven,      setConsentGiven]       = useState(false)
-  const tabSwitchCount      = useRef(0)
-  const silenceTimer        = useRef<NodeJS.Timeout | null>(null)
-  const silenceCountRef     = useRef(0)
-  const activeStatusRef     = useRef<Status>('init')
-
-  // Keep ref in sync with status state
+  const [violations,       setViolations]      = useState<Violation[]>([])
+  const [activeWarning,    setActiveWarning]   = useState<ViolationType | null>(null)
+  const [riskLevel,        setRiskLevel]       = useState<'low' | 'medium' | 'high'>('low')
+  const [isFullscreen,     setIsFullscreen]    = useState(false)
+  const [silenceSeconds,   setSilenceSeconds]  = useState(0)
+  const [showIntroConsent, setShowIntroConsent]= useState(true)
+  const [consentGiven,     setConsentGiven]    = useState(false)
+  const tabSwitchCount  = useRef(0)
+  const silenceTimer    = useRef<NodeJS.Timeout | null>(null)
+  const silenceCountRef = useRef(0)
+  const activeStatusRef = useRef<Status>('init')
   useEffect(() => { activeStatusRef.current = status }, [status])
 
-  // ── Log violation to backend + update local state ──────────────────────────
+  // ── Log violation ──────────────────────────────────────────────────────────
   const logViolation = useCallback((type: ViolationType, details = '') => {
     const ts = new Date().toISOString()
-
     setViolations(prev => {
       const existing = prev.find(v => v.type === type)
       const updated  = existing
         ? prev.map(v => v.type === type ? { ...v, count: v.count + 1, timestamp: ts } : v)
         : [...prev, { type, details, timestamp: ts, count: 1 }]
-
-      // Update risk level
       const tabCount  = updated.find(v => v.type === 'tab_switch')?.count || 0
       const fsCount   = updated.find(v => v.type === 'fullscreen_exit')?.count || 0
-      const totalHigh = tabCount + fsCount
-      setRiskLevel(totalHigh >= TAB_SWITCH_LIMIT ? 'high' : totalHigh >= 1 ? 'medium' : 'low')
-
+      setRiskLevel(tabCount + fsCount >= TAB_SWITCH_LIMIT ? 'high' : tabCount + fsCount >= 1 ? 'medium' : 'low')
       return updated
     })
-
-    // Show warning overlay
     setActiveWarning(type)
     setTimeout(() => setActiveWarning(null), 4000)
-
-    // POST to backend (fire-and-forget)
     if (applicationId) {
       fetch('/api/interviews/violations', {
         method: 'POST',
@@ -145,10 +116,10 @@ export default function CandidateInterviewPage() {
     }
   }, [applicationId, roundId])
 
-  // ── Anti-cheat: Tab / window visibility ───────────────────────────────────
+  // ── Anti-cheat hooks ───────────────────────────────────────────────────────
   useEffect(() => {
     if (!applicationId) return
-    function handleVisibility() {
+    const handleVisibility = () => {
       if (document.hidden && activeStatusRef.current === 'active') {
         tabSwitchCount.current += 1
         logViolation('tab_switch', `Tab hidden (occurrence ${tabSwitchCount.current})`)
@@ -158,62 +129,115 @@ export default function CandidateInterviewPage() {
     return () => document.removeEventListener('visibilitychange', handleVisibility)
   }, [applicationId, logViolation])
 
-  // ── Anti-cheat: Paste detection ────────────────────────────────────────────
   useEffect(() => {
     if (!applicationId) return
-    function handlePaste() {
-      if (activeStatusRef.current === 'active') {
-        logViolation('paste_detected', 'Clipboard paste event during interview')
-      }
+    const handlePaste = () => {
+      if (activeStatusRef.current === 'active') logViolation('paste_detected', 'Clipboard paste during interview')
     }
     document.addEventListener('paste', handlePaste)
     return () => document.removeEventListener('paste', handlePaste)
   }, [applicationId, logViolation])
 
-  // ── Anti-cheat: Fullscreen change ─────────────────────────────────────────
   useEffect(() => {
-    function handleFsChange() {
+    const handleFsChange = () => {
       const inFs = !!document.fullscreenElement
       setIsFullscreen(inFs)
-      if (!inFs && activeStatusRef.current === 'active') {
-        logViolation('fullscreen_exit', 'Candidate exited fullscreen during interview')
-      }
+      if (!inFs && activeStatusRef.current === 'active') logViolation('fullscreen_exit', 'Exited fullscreen during interview')
     }
     document.addEventListener('fullscreenchange', handleFsChange)
     return () => document.removeEventListener('fullscreenchange', handleFsChange)
   }, [logViolation])
 
-  // ── Anti-cheat: Silence timer ──────────────────────────────────────────────
   useEffect(() => {
     if (status !== 'active') {
       if (silenceTimer.current) clearInterval(silenceTimer.current)
-      setSilenceSeconds(0)
-      silenceCountRef.current = 0
+      setSilenceSeconds(0); silenceCountRef.current = 0
       return
     }
     silenceTimer.current = setInterval(() => {
       silenceCountRef.current += 1
       setSilenceSeconds(silenceCountRef.current)
-      if (silenceCountRef.current === SILENCE_THRESHOLD) {
-        logViolation('long_silence', `Candidate silent for ${SILENCE_THRESHOLD}s after question`)
-      }
+      if (silenceCountRef.current === SILENCE_THRESHOLD) logViolation('long_silence', `Silent for ${SILENCE_THRESHOLD}s`)
     }, 1000)
     return () => { if (silenceTimer.current) clearInterval(silenceTimer.current) }
   }, [status, logViolation])
 
   useEffect(() => {
-    if (!micMuted && status === 'active') {
-      silenceCountRef.current = 0
-      setSilenceSeconds(0)
-    }
+    if (!micMuted && status === 'active') { silenceCountRef.current = 0; setSilenceSeconds(0) }
   }, [micMuted, status])
 
-  // ── Fullscreen ─────────────────────────────────────────────────────────────
   function enterFullscreen() {
     document.documentElement.requestFullscreen?.().then(() => setIsFullscreen(true)).catch(() => {})
   }
 
-  // ── Join LiveKit room (only after consent) ─────────────────────────────────
+  // ── Initialise Simli ───────────────────────────────────────────────────────
+  const initSimli = useCallback(async () => {
+    try {
+      // Fetch config from our proxy (keeps API key server-side)
+      const cfgRes = await fetch('/api/interviews/simli-session')
+      if (!cfgRes.ok) {
+        console.warn('[Simli] Not configured — will show fallback avatar')
+        return false
+      }
+      const { apiKey, faceId } = await cfgRes.json()
+
+      // Dynamic import — keeps bundle small and avoids SSR issues
+      const { SimliClient } = await import('simli-client')
+
+      const client = new SimliClient()
+      client.Initialize({
+        apiKey,
+        faceID:        faceId,
+        handleSilence: true,
+        videoRef:      simliVideoRef,
+        audioRef:      simliAudioRef,
+      })
+
+      await client.start()
+      simliClientRef.current = client
+      setSimliReady(true)
+      console.log('[Simli] Avatar ready, faceId:', faceId)
+      return true
+    } catch (err) {
+      console.warn('[Simli] Init error:', err)
+      return false
+    }
+  }, [])
+
+  // ── Pipe bot audio → Simli ─────────────────────────────────────────────────
+  const pipeBotAudioToSimli = useCallback((mediaStreamTrack: MediaStreamTrack) => {
+    if (!simliClientRef.current) return
+
+    try {
+      const ctx = new AudioContext({ sampleRate: 16000 })
+      audioCtxRef.current = ctx
+
+      const source    = ctx.createMediaStreamSource(new MediaStream([mediaStreamTrack]))
+      const processor = ctx.createScriptProcessor(4096, 1, 1)
+      processorRef.current = processor
+
+      processor.onaudioprocess = (e) => {
+        if (!simliClientRef.current) return
+        const float32 = e.inputBuffer.getChannelData(0)
+        // Convert Float32 → PCM Int16 (what Simli expects)
+        const pcm16 = new Int16Array(float32.length)
+        for (let i = 0; i < float32.length; i++) {
+          pcm16[i] = Math.max(-32768, Math.min(32767, float32[i] * 32768))
+        }
+        simliClientRef.current.sendAudioData(new Uint8Array(pcm16.buffer))
+        setBotSpeaking(true)
+        setTimeout(() => setBotSpeaking(false), 300)
+      }
+
+      source.connect(processor)
+      processor.connect(ctx.destination)
+      console.log('[Simli] Audio pipeline connected')
+    } catch (err) {
+      console.warn('[Simli] Audio pipeline error:', err)
+    }
+  }, [])
+
+  // ── Join LiveKit room ──────────────────────────────────────────────────────
   useEffect(() => {
     if (!roomName || !lkUrl || !token || !consentGiven) return
 
@@ -221,8 +245,11 @@ export default function CandidateInterviewPage() {
 
     const join = async () => {
       setStatus('joining')
+
+      // Init Simli before joining so avatar is ready when bot speaks
+      await initSimli()
+
       try {
-        // Dynamic import — avoids SSR issues with the WebRTC SDK
         const { Room, RoomEvent, Track, ConnectionState } = await import('livekit-client')
 
         room = new Room({
@@ -232,78 +259,53 @@ export default function CandidateInterviewPage() {
         })
         roomRef.current = room
 
-        // ── Room events ────────────────────────────────────────────────────
         room.on(RoomEvent.Connected, async () => {
-          console.log('[LiveKit] Connected to room')
+          console.log('[LiveKit] Connected')
           setStatus('waiting_for_bot')
-
-          // Enable local camera + microphone
           try {
-            const [camPub, micPub] = await Promise.all([
+            const [camPub] = await Promise.all([
               room.localParticipant.setCameraEnabled(true),
               room.localParticipant.setMicrophoneEnabled(true),
             ])
-            // Attach local camera preview
-            if (camPub?.track && localVideoRef.current) {
-              camPub.track.attach(localVideoRef.current)
-            }
+            if (camPub?.track && localVideoRef.current) camPub.track.attach(localVideoRef.current)
           } catch (mediaErr) {
-            console.warn('[LiveKit] Could not enable media:', mediaErr)
+            console.warn('[LiveKit] Media error:', mediaErr)
           }
         })
 
         room.on(RoomEvent.Disconnected, (reason: any) => {
-          console.log('[LiveKit] Disconnected, reason:', reason, 'status:', activeStatusRef.current)
-          if (activeStatusRef.current === 'active') {
-            setStatus('ended')
-          } else if (activeStatusRef.current === 'waiting_for_bot') {
-            setErrorMsg('The AI interviewer disconnected. Please generate a new link and try again.')
-            setStatus('error')
-          } else {
-            setErrorMsg('Could not connect to the interview room. Please generate a fresh link.')
-            setStatus('error')
-          }
+          console.log('[LiveKit] Disconnected:', reason)
+          if (activeStatusRef.current === 'active') setStatus('ended')
+          else { setErrorMsg('The AI interviewer disconnected. Please generate a new link.'); setStatus('error') }
         })
 
         room.on(RoomEvent.ConnectionStateChanged, (state: any) => {
-          console.log('[LiveKit] Connection state:', state)
-          if (state === ConnectionState.Reconnecting) {
-            setNetworkQuality('poor')
-          } else if (state === ConnectionState.Connected) {
-            setNetworkQuality('good')
-          }
+          if (state === ConnectionState.Reconnecting) setNetworkQuality('poor')
+          else if (state === ConnectionState.Connected) setNetworkQuality('good')
         })
 
-        // Bot participant joined
         room.on(RoomEvent.ParticipantConnected, (participant: any) => {
-          console.log('[LiveKit] Participant connected:', participant.identity)
-          // If already has tracks, try to attach them
+          console.log('[LiveKit] Participant joined:', participant.identity)
           participant.trackPublications?.forEach((pub: any) => {
-            if (pub.isSubscribed && pub.track) {
-              handleRemoteTrack(pub.track)
-            }
+            if (pub.isSubscribed && pub.track) handleRemoteTrack(pub.track)
           })
         })
 
-        // Remote track (bot video/audio) subscribed
         room.on(RoomEvent.TrackSubscribed, (track: any, _pub: any, participant: any) => {
           console.log('[LiveKit] Track subscribed:', track.kind, 'from', participant.identity)
           handleRemoteTrack(track)
         })
 
         room.on(RoomEvent.TrackUnsubscribed, (track: any) => {
-          console.log('[LiveKit] Track unsubscribed:', track.kind)
           if (typeof track.detach === 'function') track.detach()
         })
 
-        // Local track published (backup: attach camera if not done via setCameraEnabled)
         room.on(RoomEvent.LocalTrackPublished, (pub: any) => {
           if (pub.source === Track.Source.Camera && pub.track && localVideoRef.current) {
             pub.track.attach(localVideoRef.current)
           }
         })
 
-        // ── Connect ────────────────────────────────────────────────────────
         await room.connect(lkUrl, token)
 
       } catch (err: any) {
@@ -315,12 +317,23 @@ export default function CandidateInterviewPage() {
 
     function handleRemoteTrack(track: any) {
       const kind = track.kind ?? track.source
-      if (kind === 'video' || kind === 'camera') {
-        if (botVideoRef.current) attachTrack(botVideoRef.current, track)
+      console.log('[LiveKit] Handling remote track:', kind)
+
+      if (kind === 'audio' || kind === 'microphone') {
+        // Route bot audio to Simli for lip-sync
+        if (track.mediaStreamTrack && simliClientRef.current) {
+          pipeBotAudioToSimli(track.mediaStreamTrack)
+        } else {
+          // Simli not available — play audio directly as fallback
+          if (simliAudioRef.current) {
+            const ms = new MediaStream([track.mediaStreamTrack || track])
+            simliAudioRef.current.srcObject = ms
+            simliAudioRef.current.play().catch(() => {})
+          }
+        }
         setStatus('active')
-      } else if (kind === 'audio' || kind === 'microphone') {
-        if (botAudioRef.current) attachTrack(botAudioRef.current, track)
-        // Bot is audio-only (no Simli) — audio track = interview is live
+      } else if (kind === 'video' || kind === 'camera') {
+        // Bot is audio-only but handle video just in case
         setStatus('active')
       }
     }
@@ -329,6 +342,8 @@ export default function CandidateInterviewPage() {
 
     return () => {
       room?.disconnect().catch(() => {})
+      audioCtxRef.current?.close().catch(() => {})
+      simliClientRef.current?.close?.()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomName, lkUrl, token, consentGiven])
@@ -339,16 +354,7 @@ export default function CandidateInterviewPage() {
     const newMuted = !micMuted
     roomRef.current.localParticipant?.setMicrophoneEnabled(!newMuted).catch(() => {})
     setMicMuted(newMuted)
-    if (!newMuted && status === 'active') {
-      silenceCountRef.current = 0
-      setSilenceSeconds(0)
-    }
-  }
-
-  function handleCamToggle() {
-    if (status === 'active') {
-      logViolation('camera_disabled', 'Candidate attempted to turn camera off')
-    }
+    if (!newMuted && status === 'active') { silenceCountRef.current = 0; setSilenceSeconds(0) }
   }
 
   function leaveCall() {
@@ -356,7 +362,6 @@ export default function CandidateInterviewPage() {
     setStatus('ended')
   }
 
-  // ── Derived ────────────────────────────────────────────────────────────────
   const totalViolations = violations.reduce((sum, v) => sum + v.count, 0)
   const riskColors = {
     low:    { bg: 'bg-green-500/20',  text: 'text-green-400',  label: 'Low Risk'    },
@@ -375,9 +380,8 @@ export default function CandidateInterviewPage() {
         </div>
         <h1 className="text-2xl font-bold mb-2">Interview Integrity Notice</h1>
         <p className="text-gray-400 text-sm mb-6 leading-relaxed">
-          Before joining, please read the following rules. This interview is monitored for integrity.
+          Before joining, please read the rules carefully. This interview is monitored for integrity.
         </p>
-
         <div className="space-y-3 mb-8">
           {[
             { icon: '🖥️', rule: 'Stay in fullscreen mode throughout the interview' },
@@ -394,7 +398,6 @@ export default function CandidateInterviewPage() {
             </div>
           ))}
         </div>
-
         <button
           onClick={() => { setShowIntroConsent(false); setConsentGiven(true); enterFullscreen() }}
           className="w-full bg-purple-600 hover:bg-purple-700 text-white py-3.5 rounded-xl font-semibold text-sm transition-all flex items-center justify-center gap-2"
@@ -409,9 +412,6 @@ export default function CandidateInterviewPage() {
     </div>
   )
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // Error / Ended / Invalid-link screens
-  // ══════════════════════════════════════════════════════════════════════════
   if (!roomName && status === 'init') return (
     <div className="min-h-screen bg-gray-950 flex items-center justify-center text-white">
       <div className="text-center max-w-sm px-6">
@@ -428,9 +428,7 @@ export default function CandidateInterviewPage() {
         <div className="text-5xl mb-4">⚠️</div>
         <h1 className="text-xl font-bold mb-2">Connection Failed</h1>
         <p className="text-gray-400 text-sm mb-4">{errorMsg}</p>
-        <button onClick={() => window.location.reload()} className="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg text-sm font-medium transition-colors">
-          Try Again
-        </button>
+        <button onClick={() => window.location.reload()} className="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg text-sm font-medium transition-colors">Try Again</button>
       </div>
     </div>
   )
@@ -448,7 +446,7 @@ export default function CandidateInterviewPage() {
         {totalViolations > 0 && (
           <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-4 text-left text-sm text-yellow-300">
             <p className="font-semibold mb-1 flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Integrity Notice</p>
-            <p className="text-yellow-400/80 text-xs">{totalViolations} integrity event{totalViolations !== 1 ? 's' : ''} were recorded during your interview and will be reviewed by HR.</p>
+            <p className="text-yellow-400/80 text-xs">{totalViolations} integrity event{totalViolations !== 1 ? 's' : ''} were recorded during your interview.</p>
           </div>
         )}
       </div>
@@ -456,24 +454,24 @@ export default function CandidateInterviewPage() {
   )
 
   // ══════════════════════════════════════════════════════════════════════════
-  // Main Interview UI
+  // Main Interview UI — Simli humanoid avatar
   // ══════════════════════════════════════════════════════════════════════════
   return (
     <div className="min-h-screen bg-gray-950 text-white flex flex-col select-none">
 
-      {/* ── Violation Warning Overlay ─────────────────────────────────────── */}
+      {/* Violation Warning Overlay */}
       {activeWarning && (
         <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
-          <div className="bg-red-900/95 border-2 border-red-500 rounded-2xl px-8 py-6 max-w-sm mx-4 text-center shadow-2xl animate-bounce-once">
+          <div className="bg-red-900/95 border-2 border-red-500 rounded-2xl px-8 py-6 max-w-sm mx-4 text-center shadow-2xl">
             <div className="text-4xl mb-3">{VIOLATION_META[activeWarning].icon}</div>
             <h3 className="font-bold text-lg mb-2 text-red-200">{VIOLATION_META[activeWarning].title}</h3>
             <p className="text-red-300 text-sm leading-relaxed">{VIOLATION_META[activeWarning].desc}</p>
-            <p className="text-red-400/70 text-xs mt-3 font-medium">This has been logged and will be reviewed by HR</p>
+            <p className="text-red-400/70 text-xs mt-3 font-medium">This has been logged for HR review</p>
           </div>
         </div>
       )}
 
-      {/* ── Fullscreen nudge ──────────────────────────────────────────────── */}
+      {/* Fullscreen nudge */}
       {!isFullscreen && status === 'active' && (
         <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-40 bg-yellow-900/90 border border-yellow-600 rounded-xl px-4 py-2.5 flex items-center gap-3 text-sm shadow-xl">
           <Maximize2 className="w-4 h-4 text-yellow-400 shrink-0" />
@@ -484,30 +482,24 @@ export default function CandidateInterviewPage() {
         </div>
       )}
 
-      {/* ── Header ────────────────────────────────────────────────────────── */}
+      {/* Header */}
       <div className="px-6 py-3 border-b border-gray-800 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 bg-purple-600 rounded-lg flex items-center justify-center text-sm font-bold">H</div>
           <div>
-            <p className="text-sm font-semibold leading-none">AI Interview</p>
+            <p className="text-sm font-semibold leading-none">AI Interview · Howell HR</p>
             <p className="text-xs text-gray-400 mt-0.5">{candidateName}</p>
           </div>
         </div>
-
         <div className="flex items-center gap-2 flex-wrap justify-end">
-          {/* Network quality */}
           <div className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded-full ${networkQuality === 'good' ? 'bg-green-500/20 text-green-400' : networkQuality === 'poor' ? 'bg-red-500/20 text-red-400' : 'bg-gray-700 text-gray-400'}`}>
             {networkQuality === 'poor' ? <WifiOff className="w-3 h-3" /> : <Wifi className="w-3 h-3" />}
             {networkQuality === 'good' ? 'Good' : networkQuality === 'poor' ? 'Poor' : 'Connecting…'}
           </div>
-
-          {/* Interview status */}
           <div className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded-full ${status === 'active' ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
             <span className={`w-1.5 h-1.5 rounded-full animate-pulse ${status === 'active' ? 'bg-green-400' : 'bg-yellow-400'}`} />
             {status === 'joining' ? 'Connecting…' : status === 'waiting_for_bot' ? 'AI Interviewer joining…' : 'Interview in Progress'}
           </div>
-
-          {/* Integrity badge */}
           {status === 'active' && (
             <div className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded-full ${riskColors[riskLevel].bg} ${riskColors[riskLevel].text}`}>
               <Eye className="w-3 h-3" />
@@ -515,8 +507,6 @@ export default function CandidateInterviewPage() {
               {totalViolations > 0 && <span className="font-bold">· {totalViolations}</span>}
             </div>
           )}
-
-          {/* Silence timer */}
           {status === 'active' && silenceSeconds >= 10 && (
             <div className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded-full ${silenceSeconds >= SILENCE_THRESHOLD ? 'bg-red-500/20 text-red-400' : 'bg-gray-700 text-gray-400'}`}>
               <Clock className="w-3 h-3" />
@@ -526,52 +516,62 @@ export default function CandidateInterviewPage() {
         </div>
       </div>
 
-      {/* ── Video area ────────────────────────────────────────────────────── */}
+      {/* Video area */}
       <div className="flex-1 flex items-center justify-center p-6 gap-6 flex-wrap">
 
-        {/* AI Interviewer panel — CSS animated avatar + audio */}
-        <div className="relative bg-gradient-to-b from-gray-800 to-gray-900 rounded-2xl overflow-hidden shadow-2xl flex flex-col items-center justify-center" style={{ width: 640, height: 480 }}>
-          <audio ref={botAudioRef} autoPlay />
-          <audio ref={botVideoRef as any} style={{ display: 'none' }} />
+        {/* ── Simli Humanoid Avatar Panel ────────────────────────────────── */}
+        <div
+          className="relative rounded-2xl overflow-hidden shadow-2xl bg-black"
+          style={{ width: 640, height: 480 }}
+        >
+          {/* Simli video output — humanoid avatar lip-syncing to bot voice */}
+          <video
+            ref={simliVideoRef}
+            autoPlay
+            playsInline
+            className={`w-full h-full object-cover transition-opacity duration-500 ${simliReady ? 'opacity-100' : 'opacity-0'}`}
+          />
+          {/* Hidden Simli audio element */}
+          <audio ref={simliAudioRef} autoPlay style={{ display: 'none' }} />
 
-          {(status === 'joining' || status === 'waiting_for_bot') ? (
-            <div className="flex flex-col items-center justify-center">
+          {/* Loading / waiting state shown when Simli not ready yet */}
+          {!simliReady && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-b from-gray-900 to-gray-950">
               <div className="relative mb-6">
-                <div className="w-20 h-20 rounded-full bg-purple-600/30 flex items-center justify-center">
-                  <div className="w-12 h-12 rounded-full bg-purple-600/50 flex items-center justify-center">
-                    <div className="w-6 h-6 rounded-full bg-purple-600 animate-pulse" />
+                <div className="w-24 h-24 rounded-full bg-purple-600/20 flex items-center justify-center">
+                  <div className="w-14 h-14 rounded-full bg-purple-600/40 flex items-center justify-center">
+                    <div className="w-7 h-7 rounded-full bg-purple-600 animate-pulse" />
                   </div>
                 </div>
                 <div className="absolute inset-0 rounded-full border-2 border-purple-500 border-t-transparent animate-spin" />
               </div>
-              <p className="text-white font-medium mb-1">AI Interviewer is joining…</p>
-              <p className="text-gray-400 text-sm">This usually takes a few seconds</p>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center gap-4">
-              {/* Animated avatar */}
-              <div className="relative">
-                <div className="w-32 h-32 rounded-full bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center shadow-2xl shadow-purple-500/40">
-                  <span className="text-5xl">🤖</span>
-                </div>
-                {/* Speaking pulse rings */}
-                <div className="absolute inset-0 rounded-full border-2 border-purple-400/60 animate-ping" style={{ animationDuration: '1.5s' }} />
-                <div className="absolute inset-[-8px] rounded-full border border-purple-400/30 animate-ping" style={{ animationDuration: '2s' }} />
-              </div>
-              <div className="text-center">
-                <p className="text-white font-semibold text-lg">Alex</p>
-                <p className="text-purple-300 text-sm">AI Interviewer · Speaking</p>
-              </div>
+              <p className="text-white font-semibold text-lg">Alex is joining…</p>
+              <p className="text-gray-400 text-sm mt-1">AI Interviewer is warming up</p>
             </div>
           )}
 
-          <div className="absolute bottom-3 left-4 bg-black/60 backdrop-blur-sm px-2.5 py-1 rounded-lg text-sm font-medium flex items-center gap-1.5">
-            <div className="w-2 h-2 rounded-full bg-purple-400" />
+          {/* Speaking indicator rings */}
+          {simliReady && botSpeaking && (
+            <>
+              <div className="absolute inset-0 rounded-2xl border-2 border-purple-500/60 animate-ping pointer-events-none" style={{ animationDuration: '1s' }} />
+              <div className="absolute inset-[-4px] rounded-2xl border border-purple-400/30 animate-ping pointer-events-none" style={{ animationDuration: '1.5s' }} />
+            </>
+          )}
+
+          {/* Name label */}
+          <div className="absolute bottom-4 left-4 bg-black/70 backdrop-blur-sm px-3 py-1.5 rounded-xl text-sm font-semibold flex items-center gap-2">
+            <div className={`w-2 h-2 rounded-full ${botSpeaking ? 'bg-purple-400 animate-pulse' : 'bg-gray-500'}`} />
             Alex · AI Interviewer
+          </div>
+
+          {/* Powered by badge */}
+          <div className="absolute top-3 right-3 bg-black/60 backdrop-blur-sm px-2 py-1 rounded-lg text-xs text-gray-400 flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-green-400" />
+            Powered by Simli
           </div>
         </div>
 
-        {/* Candidate local video */}
+        {/* ── Candidate local video ───────────────────────────────────────── */}
         <div className="relative bg-gray-900 rounded-2xl overflow-hidden shadow-xl" style={{ width: 320, height: 240 }}>
           <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-full object-cover scale-x-[-1]" />
           <div className="absolute bottom-3 left-3 bg-black/60 backdrop-blur-sm px-2.5 py-1 rounded-lg text-sm font-medium flex items-center gap-1.5">
@@ -586,9 +586,8 @@ export default function CandidateInterviewPage() {
         </div>
       </div>
 
-      {/* ── Controls ──────────────────────────────────────────────────────── */}
+      {/* Controls */}
       <div className="flex items-center justify-center gap-4 pb-6">
-        {/* Mic toggle */}
         <button
           onClick={toggleMic}
           className={`w-12 h-12 rounded-full flex items-center justify-center transition-all ${micMuted ? 'bg-red-500 hover:bg-red-600' : 'bg-gray-700 hover:bg-gray-600'}`}
@@ -597,32 +596,14 @@ export default function CandidateInterviewPage() {
           {micMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
         </button>
 
-        {/* Camera — locked during active interview */}
-        <div className="relative group">
-          <button
-            onClick={handleCamToggle}
-            className="w-12 h-12 rounded-full flex items-center justify-center transition-all bg-gray-700 opacity-40 cursor-not-allowed"
-            title="Camera must stay on during interview"
-          >
-            <Video className="w-5 h-5" />
-          </button>
-          {status === 'active' && (
-            <div className="absolute bottom-14 left-1/2 -translate-x-1/2 whitespace-nowrap bg-gray-800 text-xs text-gray-300 px-2 py-1 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-              Camera locked during interview
-            </div>
-          )}
-        </div>
-
-        {/* Fullscreen */}
         <button
           onClick={enterFullscreen}
           className="w-12 h-12 rounded-full flex items-center justify-center transition-all bg-gray-700 hover:bg-gray-600"
-          title="Enter fullscreen"
+          title="Fullscreen"
         >
           <Maximize2 className="w-5 h-5" />
         </button>
 
-        {/* Leave */}
         <button
           onClick={leaveCall}
           className="w-12 h-12 rounded-full bg-red-600 hover:bg-red-700 flex items-center justify-center transition-all"
@@ -632,10 +613,10 @@ export default function CandidateInterviewPage() {
         </button>
       </div>
 
-      {/* ── Integrity footer ──────────────────────────────────────────────── */}
+      {/* Integrity footer */}
       <div className="text-center pb-4 px-4 text-xs text-gray-600 flex items-center justify-center gap-2">
         <ShieldAlert className="w-3 h-3" />
-        This interview is monitored for integrity. Tab switches, fullscreen exits and paste activity are logged for HR review.
+        This interview is monitored for integrity. All activity is logged for HR review.
       </div>
     </div>
   )
