@@ -204,9 +204,14 @@ export default function PreScreenClient({ sessions: initial, applications }: Pro
                 {s.status === 'pending' && (
                   <div className="flex items-center gap-2 mt-1">
                     <button
-                      onClick={e => { e.stopPropagation(); setActiveBot(s); setBotStep(0); setBotAnswers([]); }}
+                      onClick={e => {
+                        e.stopPropagation()
+                        const url = `${window.location.origin}/text-prescreen/${s.id}`
+                        navigator.clipboard.writeText(url)
+                        alert(`Text bot link copied!\n\n${url}\n\nShare this link with the candidate. They will open it on their own device and answer the questions directly.`)
+                      }}
                       className="flex items-center gap-1.5 text-xs text-red-700 hover:text-red-800 font-medium">
-                      <Play size={12}/> Text Bot
+                      <Copy size={12}/> Copy Text Link
                     </button>
                     <span className="text-gray-300">|</span>
                     <button

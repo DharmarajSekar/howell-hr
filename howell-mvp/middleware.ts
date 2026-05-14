@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { NextResponse, type NextRequest } from 'next/server'
 
-const PUBLIC_PATHS = ['/login', '/apply', '/video-prescreen']
+const PUBLIC_PATHS = ['/login', '/apply', '/video-prescreen', '/candidate-interview', '/text-prescreen']
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
@@ -16,7 +16,8 @@ export function middleware(request: NextRequest) {
                             pathname.startsWith('/api/screening') ||
                             pathname.startsWith('/api/interviews') ||
                             pathname.startsWith('/api/ai') ||
-                            pathname.startsWith('/api/cron')
+                            pathname.startsWith('/api/cron') ||
+                            pathname.startsWith('/api/pre-screen')
   const session           = request.cookies.get('howell-session')?.value
 
   if (!isPublic && !isApiAuth && !isApiPortal && !isApiJobs && !isApiTalentPool && !isApiDebug && !isApiInternal && session !== 'authenticated') {

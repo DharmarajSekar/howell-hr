@@ -8,7 +8,46 @@ export async function GET(req: Request) {
 }
 export async function POST(req: Request) {
   const data = await req.json()
-  const iv = await db.interviews.create(data)
+
+  // Only send columns that exist in the interviews table
+  const { candidate_name, candidate_email, candidate_phone, job_title } = data
+  const dbFields = {
+    application_id:   data.application_id,
+    scheduled_at:     data.scheduled_at,
+    duration_minutes: data.duration_minutes ?? 60,
+    interview_type:   data.interview_type ?? 'video',
+    meeting_link:     data.meeting_link ?? null,
+    // notes column does not exist — stored in feedback if provided
+    ...(data.notes ? { feedback: data.notes } : {}),
+  }
+
+  let iv: any
+  try {
+    iv = await db.interviews.create(dbFields)
+  } catch (e: any) {
+    console.error('Interview create error:', e.message)
+    return NextResponse.json({ error: e.message }, { status: 500 })
+  }
+  if (!iv) {
+    return NextResponse.json({ error: 'Interview could not be saved — check Supabase interviews table exists' }, { status: 500 })
+  }
+
+  // Update application status to interview_scheduled
+  if (data.application_id) {
+    try {
+      const { createClient } = await import('@supabase/supabase-js')
+      const svc = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!
+      )
+      await svc.from('applications')
+        .update({ status: 'interview_scheduled', updated_at: new Date().toISOString() })
+        .eq('id', data.application_id)
+    } catch (e: any) {
+      console.error('Failed to update application status:', e.message)
+    }
+  }
+
   if (data.candidate_name) {
     await db.notifications.create({
       recipient_name: data.candidate_name,
