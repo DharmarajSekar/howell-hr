@@ -131,12 +131,13 @@ async function autoInitiateOnboarding(
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        candidate_name: candidateName,
-        candidate_id:   candidateId || null,
-        job_title:      jobTitle || 'the role',
-        joining_date:   null,
-        department:     null,
-        personal_email: null,
+        candidate_name:  candidateName,
+        candidate_id:    candidateId || null,
+        job_title:       jobTitle || 'the role',
+        joining_date:    null,
+        department:      null,
+        personal_email:  null,
+        initial_status:  'pending_bgv',  // stays on hold until BGV clears
       }),
     })
 

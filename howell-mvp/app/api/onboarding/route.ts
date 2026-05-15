@@ -136,6 +136,7 @@ export async function POST(req: NextRequest) {
   const {
     candidate_name, job_title, joining_date,
     candidate_id, department, personal_email,
+    initial_status,   // optional — 'pending_bgv' when auto-created on hire (activates after BGV clears)
   } = body
 
   // 1. Generate personalised tasks via Claude
@@ -183,7 +184,7 @@ export async function POST(req: NextRequest) {
       candidate_name,
       job_title,
       joining_date:  joining_date || null,
-      status:        'in_progress',
+      status:        initial_status || 'in_progress',
       employee_id:   employeeRecord?.employee_id || employee_id,
       candidate_id:  candidate_id || null,
       corporate_email,

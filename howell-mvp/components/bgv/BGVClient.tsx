@@ -1,6 +1,6 @@
 'use client'
 import { useState } from 'react'
-import { ShieldCheck, Plus, AlertTriangle, CheckCircle, Clock, XCircle, FileText, Upload, Zap, RefreshCw } from 'lucide-react'
+import { ShieldCheck, Plus, AlertTriangle, CheckCircle, Clock, XCircle, FileText, Upload, Zap, RefreshCw, Info } from 'lucide-react'
 
 const CHECK_LABELS: Record<string, string> = {
   identity_check:   'Identity Verification',
@@ -8,6 +8,15 @@ const CHECK_LABELS: Record<string, string> = {
   employment_check: 'Employment History',
   address_check:    'Address Verification',
   criminal_check:   'Criminal Record',
+}
+
+// Which uploaded document types satisfy each check
+const CHECK_DOC_MAP: Record<string, string[]> = {
+  identity_check:   ['Aadhaar Card', 'PAN Card', 'Passport', 'Driving License'],
+  education_check:  ['Degree Certificate', '10th Marksheet', '12th Marksheet'],
+  employment_check: ['Offer Letter (Previous)', 'Relieving Letter', 'Payslips (Last 3 months)'],
+  address_check:    ['Aadhaar Card', 'Bank Statement', 'Passport'],
+  criminal_check:   ['Police Clearance Certificate'],
 }
 
 const STATUS_CONFIG: Record<string, { icon: any; color: string; bg: string }> = {
@@ -43,10 +52,11 @@ export default function BGVClient({ records: initial, applications }: Props) {
   const [showAdd, setShowAdd]     = useState(false)
   const [formApp, setFormApp]     = useState('')
   const [adding, setAdding]       = useState(false)
-  const [running, setRunning]     = useState(false)
-  const [uploadType, setUploadType] = useState('')
-  const [uploading, setUploading] = useState(false)
+  const [running, setRunning]         = useState(false)
+  const [uploadType, setUploadType]   = useState('')
+  const [uploading, setUploading]     = useState(false)
   const [updatingCheck, setUpdatingCheck] = useState<string | null>(null)
+  const [docWarning, setDocWarning]   = useState<string[] | null>(null)  // missing doc checks
 
   async function initiateBGV() {
     const app = applications.find((a: any) => a.id === formApp)
@@ -74,22 +84,46 @@ export default function BGVClient({ records: initial, applications }: Props) {
   }
 
   async function runCheck(recordId: string) {
+    setDocWarning(null)
+
+    // ── Validate documents before running checks ──────────────────────────────
+    const uploadedTypes = (selected?.documents || []).map((d: any) => d.document_type as string)
+
+    if (uploadedTypes.length === 0) {
+      setDocWarning(['No documents uploaded. Please upload at least one document for each check before running AI verification.'])
+      return
+    }
+
+    // Find which checks have NO supporting document uploaded
+    const missingChecks = Object.keys(CHECK_LABELS).filter(key => {
+      const required = CHECK_DOC_MAP[key] || []
+      return !required.some(docType => uploadedTypes.includes(docType))
+    })
+
+    if (missingChecks.length > 0) {
+      setDocWarning(missingChecks)
+      return   // Block run — missing docs
+    }
+
+    // ── All docs present — run checks ────────────────────────────────────────
     setRunning(true)
-    // Simulate AI running BGV checks
-    await new Promise(r => setTimeout(r, 1200))
-    const statuses = ['verified','verified','verified','verified','in_review']
+    await new Promise(r => setTimeout(r, 1800))
+
+    // Each check is verified if its required doc is present; small fraud chance
     const checkKeys = Object.keys(CHECK_LABELS)
     const updates: Record<string, string> = {}
-    checkKeys.forEach((key, i) => {
-      updates[key] = statuses[i % statuses.length]
+    checkKeys.forEach(key => {
+      const hasDocs = (CHECK_DOC_MAP[key] || []).some(t => uploadedTypes.includes(t))
+      updates[key] = hasDocs ? 'verified' : 'in_review'
     })
-    const fraud_flag = Math.random() < 0.1  // 10% chance of fraud flag for demo
+
+    const fraud_flag = Math.random() < 0.08  // 8% chance of fraud flag for demo
     const res = await fetch(`/api/bgv/${recordId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ...updates,
-        status: fraud_flag ? 'flagged' : 'completed',
+        status:      fraud_flag ? 'flagged' : 'completed',
         fraud_flag,
         fraud_notes: fraud_flag ? 'Discrepancy detected in employment history. Previous employer dates do not match.' : null,
         completed_at: fraud_flag ? null : new Date().toISOString(),
@@ -253,6 +287,39 @@ export default function BGVClient({ records: initial, applications }: Props) {
                   </button>
                 )}
               </div>
+
+              {/* Missing documents warning */}
+              {docWarning && (
+                <div className="mx-5 mt-4">
+                  <div className="flex gap-3 bg-amber-50 border border-amber-300 rounded-xl p-4">
+                    <Info size={18} className="text-amber-600 flex-shrink-0 mt-0.5"/>
+                    <div className="flex-1">
+                      <div className="text-sm font-semibold text-amber-800 mb-1">
+                        {docWarning[0]?.startsWith('No documents') ? '📂 No documents uploaded' : '📂 Missing documents — cannot run AI checks'}
+                      </div>
+                      {!docWarning[0]?.startsWith('No documents') && (
+                        <>
+                          <p className="text-xs text-amber-700 mb-2">
+                            The following checks have no supporting documents uploaded. Please upload the required files first:
+                          </p>
+                          <ul className="space-y-1">
+                            {docWarning.map(key => (
+                              <li key={key} className="text-xs text-amber-800">
+                                <span className="font-medium">{CHECK_LABELS[key]}</span>
+                                <span className="text-amber-600"> — requires: {CHECK_DOC_MAP[key]?.join(' / ')}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </>
+                      )}
+                      {docWarning[0]?.startsWith('No documents') && (
+                        <p className="text-xs text-amber-700">{docWarning[0]}</p>
+                      )}
+                      <button onClick={() => setDocWarning(null)} className="mt-2 text-xs text-amber-600 underline">Dismiss</button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Fraud flag / Hiring Alert */}
               {selected.fraud_flag && (

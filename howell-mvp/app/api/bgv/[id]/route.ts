@@ -42,6 +42,28 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
+    // ── BGV completed cleanly → activate onboarding record ──────────────────
+    if (body.status === 'completed' && !body.fraud_flag && bgv) {
+      // Set onboarding record to 'active' so HR can proceed (it was created on hire but held)
+      if (bgv.candidate_id) {
+        await svc()
+          .from('onboarding_records')
+          .update({ status: 'in_progress', bgv_cleared_at: new Date().toISOString() })
+          .eq('candidate_id', bgv.candidate_id)
+          .eq('status', 'pending_bgv')   // only update if it was waiting for BGV
+      }
+
+      createSystemNotification({
+        type:        'bgv_completed',
+        title:       `✅ BGV Cleared — ${bgv.candidate_name}`,
+        message:     `Background verification for ${bgv.candidate_name} has passed all checks. Onboarding is now fully active.`,
+        severity:    'info',
+        link:        `/onboarding`,
+        entity_id:   params.id,
+        entity_type: 'bgv_record',
+      })
+    }
+
     // ── Fire system-wide alert if fraud detected ─────────────────────────────
     if (body.fraud_flag === true && bgv) {
       const fraudNote = body.fraud_notes || 'Discrepancy detected during background verification. Manual review required before proceeding with hire.'
