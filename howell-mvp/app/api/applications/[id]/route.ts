@@ -72,7 +72,12 @@ async function fireAutoMessage(
   }
 }
 
-async function autoBGV(candidateName: string, candidateId: string | null, applicationId: string) {
+async function autoBGV(
+  candidateName: string,
+  candidateId: string | null,
+  applicationId: string,
+  jobTitle: string,
+) {
   try {
     const { data: existing } = await svc()
       .from('bgv_records')
@@ -82,23 +87,67 @@ async function autoBGV(candidateName: string, candidateId: string | null, applic
 
     if (existing) return // BGV already exists
 
-    await svc()
+    const { error } = await svc()
       .from('bgv_records')
       .insert({
-        candidate_name:    candidateName,
-        candidate_id:      candidateId || null,
-        application_id:    applicationId,
-        status:            'pending',
-        identity_check:    'pending',
-        education_check:   'pending',
-        employment_check:  'pending',
-        reference_check:   'pending',
-        fraud_flag:        false,
-        initiated_at:      new Date().toISOString(),
-        notes:             'Auto-initiated on candidate hire',
+        candidate_name:   candidateName,
+        candidate_id:     candidateId || null,
+        application_id:   applicationId,
+        job_title:        jobTitle,          // NOT NULL — was missing, causing silent failure
+        status:           'initiated',
+        identity_check:   'pending',
+        education_check:  'pending',
+        employment_check: 'pending',
+        address_check:    'pending',         // correct column name (was 'reference_check')
+        criminal_check:   'pending',         // correct column name (was missing)
+        fraud_flag:       false,
+        initiated_at:     new Date().toISOString(),
       })
+
+    if (error) console.error('Auto-BGV DB error:', error.message)
+    else console.log(`[autoBGV] BGV record created for ${candidateName}`)
   } catch (e) {
     console.error('Auto-BGV initiation failed:', e)
+  }
+}
+
+async function autoInitiateOnboarding(
+  candidateName: string,
+  candidateId: string | null,
+  jobTitle: string,
+) {
+  try {
+    // Check if onboarding record already exists for this candidate
+    const { data: existing } = await svc()
+      .from('onboarding_records')
+      .select('id')
+      .eq('candidate_name', candidateName)
+      .maybeSingle()
+
+    if (existing) return // Already onboarded
+
+    const base = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+    const res = await fetch(`${base}/api/onboarding`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        candidate_name: candidateName,
+        candidate_id:   candidateId || null,
+        job_title:      jobTitle || 'the role',
+        joining_date:   null,
+        department:     null,
+        personal_email: null,
+      }),
+    })
+
+    if (!res.ok) {
+      const err = await res.text()
+      console.error('Auto-onboarding failed:', err)
+    } else {
+      console.log(`[autoOnboarding] Onboarding record created for ${candidateName}`)
+    }
+  } catch (e) {
+    console.error('Auto-onboarding initiation failed:', e)
   }
 }
 
@@ -125,9 +174,10 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     // 1. Auto-message candidate
     await fireAutoMessage(candidateName, candidateId, params.id, body.status, role)
 
-    // 2. Auto-initiate BGV when hired
+    // 2. Auto-initiate BGV + Onboarding when hired
     if (body.status === 'hired') {
-      await autoBGV(candidateName, candidateId, params.id)
+      await autoBGV(candidateName, candidateId, params.id, role)
+      autoInitiateOnboarding(candidateName, candidateId, role) // fire-and-forget
 
       // 2b. Increment positions_filled; auto-close only when all positions are filled
       const jobId = currentApp.job_id || currentApp.job?.id
