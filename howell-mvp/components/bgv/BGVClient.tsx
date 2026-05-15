@@ -46,6 +46,7 @@ export default function BGVClient({ records: initial, applications }: Props) {
   const [running, setRunning]     = useState(false)
   const [uploadType, setUploadType] = useState('')
   const [uploading, setUploading] = useState(false)
+  const [updatingCheck, setUpdatingCheck] = useState<string | null>(null)
 
   async function initiateBGV() {
     const app = applications.find((a: any) => a.id === formApp)
@@ -99,6 +100,40 @@ export default function BGVClient({ records: initial, applications }: Props) {
     setRecords(prev => prev.map((r: any) => r.id === recordId ? full : r))
     setSelected(full)
     setRunning(false)
+  }
+
+  async function updateCheck(recordId: string, checkKey: string, newStatus: string) {
+    setUpdatingCheck(checkKey)
+    try {
+      // Build overall BGV status based on all checks after this update
+      const currentChecks = { ...selected }
+      currentChecks[checkKey] = newStatus
+      const allKeys = Object.keys(CHECK_LABELS)
+      const anyFailed  = allKeys.some(k => currentChecks[k] === 'failed' || currentChecks[k] === 'flagged')
+      const anyPending = allKeys.some(k => currentChecks[k] === 'pending' || currentChecks[k] === 'in_review')
+      const allVerified = allKeys.every(k => currentChecks[k] === 'verified')
+
+      const overallStatus = anyFailed ? 'flagged' : allVerified ? 'completed' : anyPending ? 'in_progress' : 'in_progress'
+
+      const res = await fetch(`/api/bgv/${recordId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          [checkKey]: newStatus,
+          status: overallStatus,
+          fraud_flag: anyFailed,
+          ...(allVerified && { completed_at: new Date().toISOString() }),
+        }),
+      })
+      const updated = await res.json()
+      const full = { ...updated, documents: selected?.documents || [] }
+      setRecords(prev => prev.map((r: any) => r.id === recordId ? full : r))
+      setSelected(full)
+    } catch (e) {
+      console.error('Check update failed:', e)
+    } finally {
+      setUpdatingCheck(null)
+    }
   }
 
   async function uploadDocument(recordId: string) {
@@ -242,20 +277,41 @@ export default function BGVClient({ records: initial, applications }: Props) {
 
               {/* Checks grid */}
               <div className="p-5 border-b border-gray-100">
-                <h3 className="text-sm font-semibold text-gray-900 mb-3">Verification Checks</h3>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-semibold text-gray-900">Verification Checks</h3>
+                  <span className="text-xs text-gray-400">Click a status to update manually</span>
+                </div>
                 <div className="grid grid-cols-1 gap-2">
                   {checks.map(key => {
                     const status = selected[key] || 'pending'
                     const cfg    = STATUS_CONFIG[status] || STATUS_CONFIG.pending
+                    const isUpdating = updatingCheck === key
                     return (
                       <div key={key} className="flex items-center gap-3 p-3 rounded-lg bg-gray-50 border border-gray-100">
-                        <div className={`w-7 h-7 rounded-full flex items-center justify-center ${cfg.bg}`}>
-                          <cfg.icon size={14} className={cfg.color}/>
+                        <div className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 ${cfg.bg}`}>
+                          {isUpdating
+                            ? <RefreshCw size={13} className="animate-spin text-gray-400"/>
+                            : <cfg.icon size={14} className={cfg.color}/>
+                          }
                         </div>
                         <span className="text-sm text-gray-700 flex-1">{CHECK_LABELS[key]}</span>
-                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${cfg.bg} ${cfg.color}`}>
-                          {status.replace('_', ' ')}
-                        </span>
+                        <select
+                          value={status}
+                          disabled={isUpdating}
+                          onChange={e => updateCheck(selected.id, key, e.target.value)}
+                          className={`text-xs px-2 py-1 rounded-lg border font-medium cursor-pointer focus:outline-none focus:ring-2 focus:ring-red-400 disabled:opacity-50
+                            ${status === 'verified'  ? 'bg-green-100 text-green-700 border-green-200' :
+                              status === 'failed'    ? 'bg-red-100 text-red-700 border-red-200' :
+                              status === 'flagged'   ? 'bg-orange-100 text-orange-700 border-orange-200' :
+                              status === 'in_review' ? 'bg-blue-100 text-blue-700 border-blue-200' :
+                                                       'bg-gray-100 text-gray-600 border-gray-200'}`}
+                        >
+                          <option value="pending">pending</option>
+                          <option value="in_review">in review</option>
+                          <option value="verified">verified</option>
+                          <option value="failed">failed</option>
+                          <option value="flagged">flagged</option>
+                        </select>
                       </div>
                     )
                   })}
