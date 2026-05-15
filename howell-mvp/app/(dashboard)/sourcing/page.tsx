@@ -459,9 +459,17 @@ export default function SourcingPage() {
                   : bulkSaveStatus.saved > 0
                     ? <div className="flex items-center gap-2 flex-wrap">
                         <CheckCircle size={13}/>
-                        <span><strong>{bulkSaveStatus.saved}</strong> of {bulkSaveStatus.total} profiles added to <strong>Candidates Master</strong>.</span>
-                        <span className="text-green-600">Use "Move to Shortlisted" below to add them to the hiring pipeline.</span>
-                        <strong className="underline cursor-pointer" onClick={()=>window.location.href='/talent-pool'}>View in Talent Pool →</strong>
+                        {(bulkSaveStatus as any).inserted > 0
+                          ? <span>
+                              <strong>{(bulkSaveStatus as any).inserted} new</strong> profile{(bulkSaveStatus as any).inserted !== 1 ? 's' : ''} added to <strong>Candidates Master</strong>
+                              {(bulkSaveStatus as any).updated > 0 && <span className="text-green-600"> · {(bulkSaveStatus as any).updated} already existed (refreshed)</span>}.
+                            </span>
+                          : <span>
+                              All {bulkSaveStatus.total} profiles <strong>already exist</strong> in Candidates Master — data refreshed.
+                              <span className="text-blue-600 ml-1">No new profiles this search. Try a different query or location to find new candidates.</span>
+                            </span>
+                        }
+                        <strong className="underline cursor-pointer ml-1" onClick={()=>window.location.href='/talent-pool'}>View in Talent Pool →</strong>
                       </div>
                     : <div>
                         <div className="flex items-center gap-2 mb-1">

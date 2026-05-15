@@ -111,6 +111,13 @@ export default function TalentPoolClient() {
 
   useEffect(() => { loadData() }, [loadData])
 
+  // Auto-refresh when the user switches back to this tab (e.g. after fetching in Sourcing)
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === 'visible') loadData() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [loadData])
+
   const appMap = useMemo(() => {
     const m: Record<string, any[]> = {}
     applications.forEach((a: any) => {

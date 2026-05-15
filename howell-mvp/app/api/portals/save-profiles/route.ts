@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ saved: 0, failed: 0, total: 0 })
     }
 
-    let saved = 0, failed = 0
+    let inserted = 0, updated = 0, failed = 0
     const errors: string[] = []
 
     for (const p of profiles) {
@@ -81,6 +81,7 @@ export async function POST(req: NextRequest) {
             failed++
             continue
           }
+          updated++
         } else {
           // Insert new record
           const { error: insErr } = await db()
@@ -91,9 +92,8 @@ export async function POST(req: NextRequest) {
             failed++
             continue
           }
+          inserted++
         }
-
-        saved++
 
       } catch (e: any) {
         errors.push(`EXCEPTION ${p.name}: ${e.message}`)
@@ -102,10 +102,12 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({
-      saved,
+      saved:    inserted + updated,   // total processed successfully
+      inserted,                       // genuinely new candidates added
+      updated,                        // existing candidates refreshed
       failed,
-      total:  profiles.length,
-      errors: errors.length ? errors : undefined,
+      total:    profiles.length,
+      errors:   errors.length ? errors : undefined,
     })
 
   } catch (e: any) {
