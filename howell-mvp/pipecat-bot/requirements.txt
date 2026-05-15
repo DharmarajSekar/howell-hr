@@ -7,8 +7,14 @@ fastapi>=0.111.0
 uvicorn[standard]>=0.30.0
 pydantic>=2.7.0
 
-# Async HTTP — Deepgram STT, Gemini LLM, ElevenLabs TTS
+# Async HTTP — Deepgram STT, Gemini LLM
 aiohttp>=3.9.0
+
+# TTS — Microsoft Edge TTS (free, no API key, works from any server IP)
+edge-tts>=6.1.9
+
+# Audio processing — reliable frame.data conversion
+numpy>=1.26.0
 
 # Environment loading
 python-dotenv>=1.0.0

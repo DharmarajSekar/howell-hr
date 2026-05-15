@@ -15,6 +15,8 @@ import os
 import time
 
 import aiohttp
+import numpy as np
+import edge_tts
 from dotenv import load_dotenv
 
 try:
@@ -111,23 +113,40 @@ async def call_gemini(messages: list) -> str:
 
 
 async def text_to_pcm(text: str) -> bytes:
-    """Convert text to PCM-16 audio via ElevenLabs."""
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
-            f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID}",
-            headers={"xi-api-key": EL_KEY, "Content-Type": "application/json"},
-            json={
-                "text": text,
-                "model_id": "eleven_turbo_v2_5",
-                "output_format": "pcm_16000",
-            },
-            timeout=aiohttp.ClientTimeout(total=30),
-        ) as resp:
-            if resp.status != 200:
-                err = await resp.text()
-                logger.error(f"[TTS] ElevenLabs {resp.status}: {err[:200]}")
-                return b""
-            return await resp.read()
+    """Convert text to PCM-16 16kHz using edge-tts (free, no API key, works from any server IP).
+    edge-tts outputs MP3; ffmpeg converts to raw PCM 16kHz mono.
+    """
+    try:
+        communicate = edge_tts.Communicate(text, voice="en-US-AriaNeural")
+
+        # Collect MP3 chunks from the streaming response
+        mp3_chunks: list[bytes] = []
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                mp3_chunks.append(chunk["data"])
+
+        mp3_data = b"".join(mp3_chunks)
+        if not mp3_data:
+            logger.warning("[TTS] edge-tts returned empty audio")
+            return b""
+
+        # Convert MP3 → PCM s16le 16kHz mono via ffmpeg
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-hide_banner", "-loglevel", "error",
+            "-i", "pipe:0",
+            "-f", "s16le", "-ar", "16000", "-ac", "1",
+            "pipe:1",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await proc.communicate(mp3_data)
+        logger.info(f"[TTS] edge-tts produced {len(stdout)} PCM bytes")
+        return stdout
+
+    except Exception as e:
+        logger.error(f"[TTS] edge-tts error: {e}")
+        return b""
 
 
 async def transcribe_pcm(pcm_bytes: bytes) -> str:
@@ -259,11 +278,18 @@ async def run_bot():
             async for frame_event in audio_stream:
                 frame = frame_event.frame
 
-                # Resample from LiveKit native (48kHz) to 16kHz by taking every 3rd sample
-                raw = bytes(frame.data)
-                # LiveKit delivers audio at 48kHz 16-bit — downsample to 16kHz
-                # b''.join() required — bytes() cannot accept a generator of byte slices
-                pcm16k = b''.join(raw[i*6 : i*6+2] for i in range(len(raw)//6))
+                # Safely convert frame data to numpy int16 array regardless of SDK version.
+                # Some livekit-rtc versions return frame.data as a ctypes array which
+                # bytes() misinterprets — np.frombuffer handles all buffer-protocol types.
+                try:
+                    raw_bytes = bytes(frame.data)
+                except TypeError:
+                    raw_bytes = memoryview(frame.data).cast('B').tobytes()
+                samples_48k = np.frombuffer(raw_bytes, dtype=np.int16)
+
+                # Downsample 48kHz → 16kHz by taking every 3rd sample (mono)
+                samples_16k = samples_48k[::3]
+                pcm16k = samples_16k.tobytes()
 
                 if bot_is_speaking.locked():
                     continue  # Don't capture while bot is speaking

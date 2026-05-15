@@ -184,9 +184,10 @@ export default function CandidateInterviewPage() {
       const { SimliClient, generateSimliSessionToken, LogLevel } = await import('simli-client')
 
       // v3: create a session token before initialising the client
+      // NOTE: Simli v3 API uses faceID (capital ID) not faceId
       const tokenData = await generateSimliSessionToken({
         apiKey,
-        faceId,
+        faceID: faceId,
         maxSessionLength: 3600,
         maxIdleTime:      300,
       })
