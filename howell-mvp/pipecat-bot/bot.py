@@ -20,7 +20,7 @@ import edge_tts
 from dotenv import load_dotenv
 
 try:
-    from livekit import rtc
+    from livekit import rtc, api
 except ImportError as e:
     print(f"FATAL: livekit import failed: {e}", flush=True)
     raise
@@ -31,7 +31,9 @@ logger = logging.getLogger("howell-bot")
 
 # ── Config ────────────────────────────────────────────────────────────────────
 LIVEKIT_URL    = os.environ["LIVEKIT_URL"]
-BOT_TOKEN      = os.environ["LIVEKIT_BOT_TOKEN"]
+LIVEKIT_API_KEY    = os.environ["LIVEKIT_API_KEY"]
+LIVEKIT_API_SECRET = os.environ["LIVEKIT_API_SECRET"]
+ROOM_NAME      = os.environ.get("LIVEKIT_ROOM_NAME", "interview-room")
 DEEPGRAM_KEY   = os.environ["DEEPGRAM_API_KEY"]
 GEMINI_KEY     = os.environ["GEMINI_API_KEY"]
 # ElevenLabs removed — bot uses edge-tts (free, no API key required)
@@ -209,6 +211,15 @@ async def push_audio(source: rtc.AudioSource, pcm_bytes: bytes):
 
 async def run_bot():
     logger.info("[Bot] Initialising…")
+
+    # Generate a LiveKit access token from API key + secret
+    token = api.AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET) \
+        .with_identity("howell-bot") \
+        .with_name("Alex AI Interviewer") \
+        .with_grants(api.VideoGrants(room_join=True, room=ROOM_NAME)) \
+        .to_jwt()
+    logger.info(f"[Bot] Token generated for room: {ROOM_NAME}")
+
     room = rtc.Room()
 
     # Audio source for bot speech output
@@ -312,7 +323,7 @@ async def run_bot():
 
     # ── Connect to LiveKit ─────────────────────────────────────────────────────
     logger.info(f"[Bot] Connecting to LiveKit: {LIVEKIT_URL}")
-    await room.connect(LIVEKIT_URL, BOT_TOKEN)
+    await room.connect(LIVEKIT_URL, token)
     logger.info(f"[Bot] Connected to room: {room.name}")
 
     # Publish audio track
