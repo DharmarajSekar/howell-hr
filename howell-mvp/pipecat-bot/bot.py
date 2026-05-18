@@ -34,8 +34,7 @@ LIVEKIT_URL    = os.environ["LIVEKIT_URL"]
 BOT_TOKEN      = os.environ["LIVEKIT_BOT_TOKEN"]
 DEEPGRAM_KEY   = os.environ["DEEPGRAM_API_KEY"]
 GEMINI_KEY     = os.environ["GEMINI_API_KEY"]
-EL_KEY         = os.environ["ELEVENLABS_API_KEY"]
-VOICE_ID       = os.environ.get("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
+# ElevenLabs removed — bot uses edge-tts (free, no API key required)
 CANDIDATE      = os.environ.get("CANDIDATE_NAME", "Candidate")
 JOB_TITLE      = os.environ.get("JOB_TITLE", "the role")
 COMPANY        = os.environ.get("COMPANY_NAME", "our company")
