@@ -183,13 +183,16 @@ export default function CandidateInterviewPage() {
       // Dynamic import — keeps bundle small and avoids SSR issues
       const { SimliClient, generateSimliSessionToken, LogLevel } = await import('simli-client')
 
-      // v3: create a session token before initialising the client
-      // NOTE: Simli v3 API uses faceID (capital ID) not faceId
+      // v3: generateSimliSessionToken expects { apiKey, config: { faceId, handleSilence, ... } }
+      // faceId uses lowercase 'd' (per SDK type definition)
       const tokenData = await generateSimliSessionToken({
         apiKey,
-        faceID: faceId,
-        maxSessionLength: 3600,
-        maxIdleTime:      300,
+        config: {
+          faceId:           faceId,  // lowercase 'd' — matches SimliSessionRequest interface
+          handleSilence:    true,
+          maxSessionLength: 3600,
+          maxIdleTime:      300,
+        },
       })
 
       // Handle both snake_case and camelCase response formats
