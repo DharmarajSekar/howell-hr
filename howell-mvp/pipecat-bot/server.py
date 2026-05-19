@@ -58,8 +58,8 @@ class StartBotRequest(BaseModel):
     HRMS_CALLBACK_SECRET: str
     # Service API keys
     GEMINI_API_KEY: str
-    ELEVENLABS_API_KEY: str
-    ELEVENLABS_VOICE_ID: str = "21m00Tcm4TlvDq8ikWAM"
+    ELEVENLABS_API_KEY: str = ""      # No longer used — bot uses edge-tts
+    ELEVENLABS_VOICE_ID: str = ""     # No longer used — bot uses edge-tts
     SIMLI_API_KEY: str
     SIMLI_FACE_ID: str = "cace3ef7-a4c4-425d-a8cf-a5358eb0c427"
     DEEPGRAM_API_KEY: str

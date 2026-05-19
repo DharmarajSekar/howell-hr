@@ -107,8 +107,7 @@ export async function POST(request: NextRequest) {
       HRMS_CALLBACK_SECRET:  process.env.INTERVIEW_CALLBACK_SECRET!,
       // AI service keys — forwarded from Next.js env to bot
       GEMINI_API_KEY:        process.env.GEMINI_API_KEY!,
-      ELEVENLABS_API_KEY:    process.env.ELEVENLABS_API_KEY!,
-      ELEVENLABS_VOICE_ID:   process.env.ELEVENLABS_VOICE_ID || '21m00Tcm4TlvDq8ikWAM',
+      // ELEVENLABS removed — bot uses edge-tts (no API key needed)
       SIMLI_API_KEY:         process.env.SIMLI_API_KEY!,
       SIMLI_FACE_ID:         process.env.SIMLI_FACE_ID || 'cace3ef7-a4c4-425d-a8cf-a5358eb0c427',
       DEEPGRAM_API_KEY:      process.env.DEEPGRAM_API_KEY!,
