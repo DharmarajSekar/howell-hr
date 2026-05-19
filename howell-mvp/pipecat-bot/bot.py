@@ -81,8 +81,11 @@ Rules:
 # AI Service calls
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def call_gemini(messages: list) -> str:
-    """Call Gemini 1.5 Flash and return response text."""
+async def call_gemini(messages: list):
+    """Call Gemini 1.5 Flash. Returns response text, or None on error.
+    Returns None (not an error string) so callers can avoid polluting
+    the conversation history with apology messages.
+    """
     system_text = ""
     chat_messages = []
     for m in messages:
@@ -92,6 +95,12 @@ async def call_gemini(messages: list) -> str:
             role = "user" if m["role"] == "user" else "model"
             chat_messages.append({"role": role, "parts": [{"text": m["content"]}]})
 
+    # Gemini requires at least one message in contents.
+    # When greet() calls us, only the system prompt is in conversation → contents is empty.
+    # Fix: inject a kickstart user turn so Gemini has valid input and begins the interview.
+    if not chat_messages:
+        chat_messages = [{"role": "user", "parts": [{"text": "Please begin the interview now."}]}]
+
     payload: dict = {
         "contents": chat_messages,
         "generationConfig": {"maxOutputTokens": 300, "temperature": 0.7},
@@ -99,17 +108,21 @@ async def call_gemini(messages: list) -> str:
     if system_text:
         payload["system_instruction"] = {"parts": [{"text": system_text}]}
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_KEY}",
-            json=payload,
-            timeout=aiohttp.ClientTimeout(total=20),
-        ) as resp:
-            data = await resp.json()
-            if resp.status != 200:
-                logger.error(f"[Gemini] Error {resp.status}: {data}")
-                return "I apologize, I had a technical issue. Could you repeat that?"
-            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_KEY}",
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=20),
+            ) as resp:
+                data = await resp.json()
+                if resp.status != 200:
+                    logger.error(f"[Gemini] Error {resp.status}: {data}")
+                    return None   # caller will handle gracefully
+                return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+    except Exception as e:
+        logger.error(f"[Gemini] Exception: {e}")
+        return None
 
 
 async def text_to_pcm(text: str) -> bytes:
@@ -149,7 +162,7 @@ async def text_to_pcm(text: str) -> bytes:
 
 async def transcribe_pcm(pcm_bytes: bytes) -> str:
     """Transcribe raw 16kHz PCM-16 audio via Deepgram."""
-    if len(pcm_bytes) < SAMPLE_RATE:   # < 0.5s — skip
+    if len(pcm_bytes) < SAMPLE_RATE // 2:   # < 0.25s — skip (aligned with capture minimum)
         return ""
     async with aiohttp.ClientSession() as session:
         async with session.post(
@@ -218,22 +231,36 @@ async def run_bot():
     audio_source = rtc.AudioSource(sample_rate=SAMPLE_RATE, num_channels=CHANNELS)
     bot_track = rtc.LocalAudioTrack.create_audio_track("meera-voice", audio_source)
 
-    # State
+    # ── State ─────────────────────────────────────────────────────────────────
     conversation: list = [{"role": "system", "content": build_system_prompt()}]
     bot_is_speaking    = asyncio.Lock()   # held while TTS audio is playing
     utterance_lock     = asyncio.Lock()   # prevents concurrent STT→LLM→TTS cycles
-    greeting_sent      = False            # guard against double greeting
+    greeting_sent      = False
     audio_buffer       = bytearray()
-    pre_buffer         = bytearray()      # rolling 350ms buffer before VAD triggers
+    pre_buffer         = bytearray()      # rolling 350ms pre-speech buffer
     last_voice_ts      = 0.0
     candidate_speaking = False
+    silence_watchdog_task = None          # fires if candidate stays silent after bot speaks
 
-    # Pre-buffer: keep last 350ms of audio so first syllables are never cut off
-    # 350ms × 16000 samples/s × 2 bytes/sample = 11200 bytes
-    PRE_BUFFER_BYTES = int(SAMPLE_RATE * 0.35) * 2
+    # Fix 4 — adaptive VAD: calibrate against first 2s of ambient noise
+    vad_threshold       = 1500            # default; overwritten after calibration
+    calibration_energies: list = []
+    vad_calibrated      = False
 
-    async def say(text: str):
-        """Generate TTS and push to LiveKit."""
+    PRE_BUFFER_BYTES = int(SAMPLE_RATE * 0.35) * 2   # 350ms × 2 bytes/sample
+
+    # ── Helpers ────────────────────────────────────────────────────────────────
+
+    def calc_energy(pcm: bytes) -> float:
+        """Mean absolute amplitude of a PCM-16 chunk."""
+        total, count = 0, 0
+        for i in range(0, len(pcm) - 1, 2):
+            total += abs(int.from_bytes(pcm[i:i+2], "little", signed=True))
+            count += 1
+        return total / max(count, 1)
+
+    async def _speak_raw(text: str):
+        """TTS → LiveKit without touching the silence watchdog."""
         async with bot_is_speaking:
             logger.info(f"[Bot] Speaking: {text[:80]}…")
             pcm = await text_to_pcm(text)
@@ -241,13 +268,32 @@ async def run_bot():
                 await push_audio(audio_source, pcm)
             logger.info("[Bot] Done speaking")
 
+    async def run_silence_watchdog():
+        """Fix 2 — if candidate is silent 5s after bot stops speaking, prompt them."""
+        await asyncio.sleep(5.0)
+        if not candidate_speaking and not bot_is_speaking.locked():
+            logger.info("[Bot] Silence watchdog: candidate silent 5s — prompting")
+            await _speak_raw("Take your time — whenever you are ready, please go ahead.")
+
+    async def say(text: str):
+        """Speak and start/reset the 5-second silence watchdog afterward."""
+        nonlocal silence_watchdog_task
+        # Cancel any running watchdog before speaking
+        if silence_watchdog_task and not silence_watchdog_task.done():
+            silence_watchdog_task.cancel()
+        await _speak_raw(text)
+        # Start fresh 5-second watchdog after bot finishes
+        silence_watchdog_task = asyncio.ensure_future(run_silence_watchdog())
+
     async def handle_utterance(pcm: bytes):
-        """Process captured candidate speech: STT → LLM → TTS.
-        Serialised by utterance_lock so Gemini is never called concurrently.
-        """
+        """STT → Gemini → TTS. Serialised so Gemini is never called concurrently."""
+        nonlocal silence_watchdog_task
         if utterance_lock.locked():
-            logger.info("[Bot] Still processing previous utterance — discarding overlap")
+            logger.info("[Bot] Still processing — discarding overlap")
             return
+        # Candidate spoke — cancel watchdog immediately
+        if silence_watchdog_task and not silence_watchdog_task.done():
+            silence_watchdog_task.cancel()
         async with utterance_lock:
             transcript = await transcribe_pcm(pcm)
             logger.info(f"[Bot] Transcript: {transcript!r}")
@@ -255,26 +301,33 @@ async def run_bot():
                 return
             conversation.append({"role": "user", "content": transcript})
             response = await call_gemini(conversation)
-            logger.info(f"[Bot] Gemini response: {response[:80]}…")
+            if response is None:
+                # Gemini failed — speak a recovery prompt but DO NOT save to history
+                # so the conversation stays clean for the next attempt
+                logger.warning("[Bot] Gemini failed — speaking recovery without saving to history")
+                await say("I'm sorry, I had a brief connection issue. Could you please repeat your answer?")
+                return
+            logger.info(f"[Bot] Gemini: {response[:80]}…")
             conversation.append({"role": "assistant", "content": response})
             await say(response)
 
     async def greet():
-        """Let Gemini generate the opening greeting + Q1.
-        This is critical: if we hardcode the greeting ourselves, Gemini sees Q1
-        already answered in the conversation and may re-ask it instead of progressing
-        to Q2. By letting Gemini generate the greeting, it correctly owns the full
-        question sequence from Q1 → Q2 → Q3 … → closing.
+        """Gemini generates the opening greeting + Q1.
+        Must NOT be hardcoded — if we hardcode Q1, Gemini sees it as already asked
+        and gets confused about which question to ask next (re-asks Q1 instead of Q2).
         """
         nonlocal greeting_sent
         if greeting_sent:
-            logger.info("[Bot] Greeting already sent — skipping duplicate")
             return
         greeting_sent = True
-        await asyncio.sleep(2.0)  # let candidate's browser subscribe to audio track
-        logger.info("[Bot] Generating greeting via Gemini…")
-        # conversation = [system_prompt] at this point — Gemini will greet + ask Q1
+        await asyncio.sleep(2.0)  # let candidate's browser subscribe to bot audio track
+        logger.info("[Bot] Requesting greeting from Gemini…")
         response = await call_gemini(conversation)
+        if response is None:
+            # Fallback greeting if Gemini is unavailable at startup
+            response = (f"Hello {CANDIDATE}! I'm Meera, your AI interviewer from {COMPANY}. "
+                        f"Welcome to your interview for the {JOB_TITLE} position. "
+                        f"Let's begin. {QUESTIONS[0] if QUESTIONS else 'Could you introduce yourself?'}")
         logger.info(f"[Bot] Greeting: {response[:100]}…")
         conversation.append({"role": "assistant", "content": response})
         await say(response)
@@ -298,47 +351,60 @@ async def run_bot():
 
         async def read_audio():
             nonlocal audio_buffer, pre_buffer, last_voice_ts, candidate_speaking
+            nonlocal vad_threshold, calibration_energies, vad_calibrated
+
             audio_stream = rtc.AudioStream(track)
             async for frame_event in audio_stream:
                 frame = frame_event.frame
 
-                # Safely convert frame data to numpy int16 array regardless of SDK version.
                 try:
                     raw_bytes = bytes(frame.data)
                 except TypeError:
                     raw_bytes = memoryview(frame.data).cast('B').tobytes()
                 samples_48k = np.frombuffer(raw_bytes, dtype=np.int16)
-
-                # Downsample 48kHz → 16kHz by taking every 3rd sample (mono)
-                samples_16k = samples_48k[::3]
+                samples_16k = samples_48k[::3]          # 48kHz → 16kHz
                 pcm16k = samples_16k.tobytes()
 
                 if bot_is_speaking.locked():
-                    pre_buffer.clear()   # don't accumulate pre-buffer while bot speaks
+                    pre_buffer.clear()
                     continue
 
-                has_voice = pcm_has_voice(pcm16k)
+                energy = calc_energy(pcm16k)
+
+                # ── Fix 4: Adaptive VAD calibration ───────────────────────────
+                # Collect the first 100 frames (~2s) of ambient audio to set a
+                # noise floor, then set threshold = 4× ambient (capped 600–2500).
+                # This auto-adjusts for quiet mics, noisy rooms, etc.
+                if not vad_calibrated and not candidate_speaking:
+                    calibration_energies.append(energy)
+                    if len(calibration_energies) >= 100:
+                        ambient = sum(calibration_energies) / len(calibration_energies)
+                        vad_threshold = max(600, min(2500, int(ambient * 4)))
+                        logger.info(f"[VAD] Calibrated: threshold={vad_threshold} (ambient avg={ambient:.0f})")
+                        vad_calibrated = True
+
+                has_voice = energy > vad_threshold
                 now = time.time()
 
                 if has_voice:
                     if not candidate_speaking:
-                        # First voice frame — prepend pre-buffer so first syllables are captured
+                        # Prepend rolling pre-buffer so first syllables are never missed
                         audio_buffer.extend(pre_buffer)
                         pre_buffer.clear()
                     audio_buffer.extend(pcm16k)
                     last_voice_ts = now
                     candidate_speaking = True
                 else:
-                    # Keep a rolling 350ms pre-buffer of recent non-voiced audio
+                    # Keep rolling 350ms pre-buffer of recent silent audio
                     pre_buffer.extend(pcm16k)
                     if len(pre_buffer) > PRE_BUFFER_BYTES:
                         pre_buffer = pre_buffer[-PRE_BUFFER_BYTES:]
 
                     if candidate_speaking and (now - last_voice_ts) > 0.8:
-                        # 0.8s of silence after speech → candidate finished (was 1.2s)
+                        # 0.8s silence after speech → candidate finished
                         candidate_speaking = False
-                        min_audio = int(SAMPLE_RATE * 0.25) * 2  # 0.25s minimum (was 0.5s)
-                        if len(audio_buffer) > min_audio:
+                        min_bytes = int(SAMPLE_RATE * 0.25) * 2   # 0.25s minimum
+                        if len(audio_buffer) > min_bytes:
                             captured = bytes(audio_buffer)
                             audio_buffer.clear()
                             asyncio.ensure_future(handle_utterance(captured))
