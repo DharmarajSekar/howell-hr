@@ -10,9 +10,6 @@ pydantic==2.7.0
 # Async HTTP — Deepgram STT, Gemini LLM
 aiohttp==3.9.5
 
-# TTS — Microsoft Edge TTS (free, no API key, works from any server IP)
-edge-tts==6.1.9
-
 # Audio processing — reliable frame.data conversion
 numpy==1.26.4
 
