@@ -436,6 +436,9 @@ export default function CandidateInterviewPage() {
       console.log('[LiveKit] Handling remote track:', kind)
 
       if (kind === 'audio' || kind === 'microphone') {
+        // Mark interview as active — bot has joined and its audio track is live
+        setStatus('active')
+
         if (track.mediaStreamTrack && simliClientRef.current) {
           // ── Simli ready: PCM pipeline handles lip sync + playback + level monitor ──
           pipeBotAudioToSimli(track.mediaStreamTrack)
@@ -466,9 +469,7 @@ export default function CandidateInterviewPage() {
           }
           if (track.mediaStreamTrack) setupBotAudioMonitor(track.mediaStreamTrack)
         }
-
-        setBotSpeaking(true)
-        setStatus('active')
+        // Note: botSpeaking starts false — the level monitor will set it true once audio flows
       } else if (kind === 'video' || kind === 'camera') {
         setStatus('active')
       }

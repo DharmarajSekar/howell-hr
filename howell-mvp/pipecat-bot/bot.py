@@ -216,9 +216,11 @@ async def run_bot():
 
     # State
     conversation: list = [{"role": "system", "content": build_system_prompt()}]
-    bot_is_speaking = asyncio.Lock()
-    audio_buffer   = bytearray()
-    last_voice_ts  = 0.0
+    bot_is_speaking    = asyncio.Lock()   # held while TTS audio is playing
+    utterance_lock     = asyncio.Lock()   # prevents concurrent STT→LLM→TTS cycles
+    greeting_sent      = False            # guard against double greeting
+    audio_buffer       = bytearray()
+    last_voice_ts      = 0.0
     candidate_speaking = False
 
     async def say(text: str):
@@ -231,24 +233,36 @@ async def run_bot():
             logger.info("[Bot] Done speaking")
 
     async def handle_utterance(pcm: bytes):
-        """Process captured candidate speech: STT → LLM → TTS."""
-        transcript = await transcribe_pcm(pcm)
-        logger.info(f"[Bot] Transcript: {transcript!r}")
-        if not transcript:
+        """Process captured candidate speech: STT → LLM → TTS.
+        Serialised by utterance_lock so Gemini is never called concurrently.
+        """
+        if utterance_lock.locked():
+            logger.info("[Bot] Still processing previous utterance — discarding overlap")
             return
-        conversation.append({"role": "user", "content": transcript})
-        response = await call_gemini(conversation)
-        logger.info(f"[Bot] Gemini response: {response[:80]}…")
-        conversation.append({"role": "assistant", "content": response})
-        await say(response)
+        async with utterance_lock:
+            transcript = await transcribe_pcm(pcm)
+            logger.info(f"[Bot] Transcript: {transcript!r}")
+            if not transcript:
+                return
+            conversation.append({"role": "user", "content": transcript})
+            response = await call_gemini(conversation)
+            logger.info(f"[Bot] Gemini response: {response[:80]}…")
+            conversation.append({"role": "assistant", "content": response})
+            await say(response)
 
     async def greet():
-        await asyncio.sleep(1.5)  # Let candidate settle
+        """Send welcome message + first question. Runs at most once."""
+        nonlocal greeting_sent
+        if greeting_sent:
+            logger.info("[Bot] Greeting already sent — skipping duplicate")
+            return
+        greeting_sent = True
+        await asyncio.sleep(2.0)  # give candidate's browser time to subscribe to audio track
         greeting = (
             f"Hello {CANDIDATE}! I'm Meera, your AI interviewer from {COMPANY}. "
             f"Welcome to your interview for the {JOB_TITLE} position. "
-            f"This is an AI-conducted interview — your responses will be reviewed by HR. "
-            f"Let's begin. {QUESTIONS[0] if QUESTIONS else 'Could you start by introducing yourself?'}"
+            f"This is an AI-conducted interview and your responses will be reviewed by HR. "
+            f"Let's get started. {QUESTIONS[0] if QUESTIONS else 'Could you please start by introducing yourself?'}"
         )
         conversation.append({"role": "assistant", "content": greeting})
         await say(greeting)
