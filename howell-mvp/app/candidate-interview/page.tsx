@@ -76,6 +76,12 @@ export default function CandidateInterviewPage() {
   const botAudioRef    = useRef<HTMLAudioElement>(null)   // direct bot audio fallback
   const roomRef        = useRef<any>(null)
   const simliClientRef = useRef<any>(null)
+  const audioCtxRef      = useRef<any>(null)
+  const analyserRef      = useRef<any>(null)
+  const botLevelTimerRef = useRef<any>(null)
+  const speechRecRef     = useRef<any>(null)
+  const [liveTranscript,    setLiveTranscript]    = useState('')
+  const [candidateSpeaking, setCandidateSpeaking] = useState(false)
 
   // ── Anti-cheat state ───────────────────────────────────────────────────────
   const [violations,       setViolations]      = useState<Violation[]>([])
@@ -90,6 +96,30 @@ export default function CandidateInterviewPage() {
   const silenceCountRef = useRef(0)
   const activeStatusRef = useRef<Status>('init')
   useEffect(() => { activeStatusRef.current = status }, [status])
+
+  // ── Live transcription via Web Speech API ─────────────────────────────────
+  useEffect(() => {
+    if (status !== 'active') return
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    if (!SR) return
+    const rec = new SR()
+    rec.continuous = true
+    rec.interimResults = true
+    rec.lang = 'en-US'
+    rec.onresult = (e: any) => {
+      let text = ''
+      for (let i = 0; i < e.results.length; i++) {
+        text += e.results[i][0].transcript
+      }
+      setLiveTranscript(text)
+      setCandidateSpeaking(!e.results[e.results.length - 1].isFinal)
+    }
+    rec.onerror = () => {}
+    rec.onend = () => { try { rec.start() } catch(e){} }
+    try { rec.start() } catch(e) {}
+    speechRecRef.current = rec
+    return () => { try { rec.stop() } catch(e) {} }
+  }, [status])
 
   // ── Log violation ──────────────────────────────────────────────────────────
   const logViolation = useCallback((type: ViolationType, details = '') => {
@@ -311,6 +341,27 @@ export default function CandidateInterviewPage() {
       }
     }
 
+    function setupBotAudioMonitor(track: MediaStreamTrack) {
+      try {
+        if (audioCtxRef.current) { audioCtxRef.current.close(); }
+        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
+        const source = ctx.createMediaStreamSource(new MediaStream([track]))
+        const analyser = ctx.createAnalyser()
+        analyser.fftSize = 512
+        analyser.smoothingTimeConstant = 0.3
+        source.connect(analyser)
+        audioCtxRef.current = ctx
+        analyserRef.current = analyser
+        const data = new Uint8Array(analyser.frequencyBinCount)
+        if (botLevelTimerRef.current) clearInterval(botLevelTimerRef.current)
+        botLevelTimerRef.current = setInterval(() => {
+          analyser.getByteFrequencyData(data)
+          const avg = data.reduce((a, b) => a + b, 0) / data.length
+          setBotSpeaking(avg > 8)
+        }, 120)
+      } catch (e) { console.warn('[Audio] Level monitor error:', e) }
+    }
+
     function handleRemoteTrack(track: any) {
       const kind = track.kind ?? track.source
       console.log('[LiveKit] Handling remote track:', kind)
@@ -320,6 +371,7 @@ export default function CandidateInterviewPage() {
           // ── Simli ready: route audio to Simli ONLY (handles both lip-sync + playback) ──
           // Do NOT attach to botAudioRef too — that causes dual/overlapping audio
           pipeBotAudioToSimli(track.mediaStreamTrack)
+          setupBotAudioMonitor(track.mediaStreamTrack)
           console.log('[Audio] Routed bot audio to Simli exclusively')
         } else {
           // ── Fallback: Simli not ready — play audio directly via botAudioRef ──
@@ -345,6 +397,7 @@ export default function CandidateInterviewPage() {
           } catch (err) {
             console.warn('[Audio] Failed to attach bot audio:', err)
           }
+          if (track.mediaStreamTrack) setupBotAudioMonitor(track.mediaStreamTrack)
         }
 
         setBotSpeaking(true)
@@ -531,27 +584,25 @@ export default function CandidateInterviewPage() {
         </div>
       </div>
 
-      {/* Video area */}
-      <div className="flex-1 flex items-center justify-center p-6 gap-6 flex-wrap">
+      {/* Video area — 50/50 split */}
+      <div className="flex-1 flex items-stretch p-4 gap-4 min-h-0 overflow-hidden">
 
         {/* ── Simli Humanoid Avatar Panel ────────────────────────────────── */}
         <div
-          className="relative rounded-2xl overflow-hidden shadow-2xl bg-black"
-          style={{ width: 640, height: 480 }}
+          className="relative rounded-2xl overflow-hidden shadow-2xl bg-black flex-1 min-w-0"
         >
-          {/* Simli video output — humanoid avatar lip-syncing to bot voice */}
+          {/* Simli video output */}
           <video
             ref={simliVideoRef}
             autoPlay
             playsInline
             className={`w-full h-full object-cover transition-opacity duration-500 ${simliReady ? 'opacity-100' : 'opacity-0'}`}
           />
-          {/* Hidden Simli audio element (for Simli lip-sync output) */}
+          {/* Hidden audio elements */}
           <audio ref={simliAudioRef} autoPlay style={{ display: 'none' }} />
-          {/* Hidden direct bot audio element (guaranteed playback regardless of Simli) */}
           <audio ref={botAudioRef} autoPlay style={{ display: 'none' }} />
 
-          {/* Loading / waiting state shown when Simli not ready yet */}
+          {/* Loading state */}
           {!simliReady && (
             <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-b from-gray-900 to-gray-950">
               <div className="relative mb-6">
@@ -567,7 +618,7 @@ export default function CandidateInterviewPage() {
             </div>
           )}
 
-          {/* Speaking indicator rings */}
+          {/* Speaking rings — only when bot is actively speaking */}
           {simliReady && botSpeaking && (
             <>
               <div className="absolute inset-0 rounded-2xl border-2 border-purple-500/60 animate-ping pointer-events-none" style={{ animationDuration: '1s' }} />
@@ -575,10 +626,20 @@ export default function CandidateInterviewPage() {
             </>
           )}
 
+          {/* Listening mode overlay — shown when Alex is listening */}
+          {simliReady && !botSpeaking && status === 'active' && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-black/60 backdrop-blur-sm px-3 py-1 rounded-full text-xs text-green-300 flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+              Listening…
+            </div>
+          )}
+
           {/* Name label */}
           <div className="absolute bottom-4 left-4 bg-black/70 backdrop-blur-sm px-3 py-1.5 rounded-xl text-sm font-semibold flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${botSpeaking ? 'bg-purple-400 animate-pulse' : 'bg-gray-500'}`} />
+            <div className={`w-2 h-2 rounded-full ${botSpeaking ? 'bg-purple-400 animate-pulse' : 'bg-green-500'}`} />
             Alex · AI Interviewer
+            {botSpeaking && <span className="text-xs text-purple-300 font-normal">Speaking</span>}
+            {!botSpeaking && status === 'active' && <span className="text-xs text-green-300 font-normal">Listening</span>}
           </div>
 
           {/* Powered by badge */}
@@ -589,10 +650,16 @@ export default function CandidateInterviewPage() {
         </div>
 
         {/* ── Candidate local video ───────────────────────────────────────── */}
-        <div className="relative bg-gray-900 rounded-2xl overflow-hidden shadow-xl" style={{ width: 320, height: 240 }}>
+        <div className="relative bg-gray-900 rounded-2xl overflow-hidden shadow-xl flex-1 min-w-0">
           <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-full object-cover scale-x-[-1]" />
+
+          {/* Candidate speaking indicator */}
+          {candidateSpeaking && (
+            <div className="absolute inset-0 rounded-2xl border-2 border-green-500/50 animate-pulse pointer-events-none" />
+          )}
+
           <div className="absolute bottom-3 left-3 bg-black/60 backdrop-blur-sm px-2.5 py-1 rounded-lg text-sm font-medium flex items-center gap-1.5">
-            <div className="w-2 h-2 rounded-full bg-green-400" />
+            <div className={`w-2 h-2 rounded-full ${candidateSpeaking ? 'bg-green-400 animate-pulse' : 'bg-gray-500'}`} />
             {candidateName} · You
           </div>
           {micMuted && (
@@ -602,6 +669,43 @@ export default function CandidateInterviewPage() {
           )}
         </div>
       </div>
+
+      {/* Live transcription bar */}
+      {status === 'active' && (
+        <div className="px-4 pb-2">
+          <div className="bg-gray-900/90 border border-gray-700 rounded-xl p-3">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-xs text-gray-400 font-medium flex items-center gap-1.5">
+                <span className={`w-1.5 h-1.5 rounded-full ${candidateSpeaking ? 'bg-green-400 animate-pulse' : 'bg-gray-600'}`} />
+                Your Response
+              </span>
+              <button
+                onClick={() => setLiveTranscript('')}
+                className="text-xs text-gray-500 hover:text-gray-300 transition px-2 py-0.5 rounded-lg hover:bg-gray-800"
+              >
+                Clear
+              </button>
+            </div>
+            <textarea
+              value={liveTranscript}
+              onChange={e => setLiveTranscript(e.target.value)}
+              onCopy={e => e.preventDefault()}
+              onCut={e => e.preventDefault()}
+              onPaste={e => e.preventDefault()}
+              onKeyDown={e => {
+                if ((e.ctrlKey || e.metaKey) && ['c','v','x'].includes(e.key.toLowerCase())) {
+                  e.preventDefault()
+                }
+              }}
+              onContextMenu={e => e.preventDefault()}
+              placeholder="Your answer will appear here as you speak. You can edit if needed."
+              rows={2}
+              className="w-full bg-transparent text-sm text-white placeholder-gray-600 resize-none focus:outline-none leading-relaxed"
+              style={{ WebkitUserSelect: 'text', userSelect: 'text' } as any}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Controls */}
       <div className="flex items-center justify-center gap-4 pb-6">
