@@ -15,7 +15,9 @@ import os
 import time
 
 import aiohttp
+import io
 import numpy as np
+from gtts import gTTS
 from dotenv import load_dotenv
 
 try:
@@ -111,31 +113,35 @@ async def call_gemini(messages: list) -> str:
 
 
 async def text_to_pcm(text: str) -> bytes:
-    """Convert text to PCM-16 16kHz using Deepgram Aura TTS.
-    Deepgram returns raw PCM directly — no ffmpeg needed.
-    Works from any cloud server IP (unlike edge-tts which Microsoft blocks).
+    """Convert text to PCM-16 16kHz using gTTS (Google TTS, Indian English accent).
+    gTTS outputs MP3; ffmpeg converts it to raw 16kHz mono PCM-16.
+    Works from any cloud server IP — no API key required.
     """
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                "https://api.deepgram.com/v1/speak"
-                "?model=aura-asteria-en&encoding=linear16&sample_rate=16000&container=none",
-                headers={
-                    "Authorization": f"Token {DEEPGRAM_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={"text": text},
-                timeout=aiohttp.ClientTimeout(total=30),
-            ) as resp:
-                if resp.status != 200:
-                    error = await resp.text()
-                    logger.error(f"[TTS] Deepgram error {resp.status}: {error}")
-                    return b""
-                pcm = await resp.read()
-                logger.info(f"[TTS] Deepgram produced {len(pcm)} PCM bytes")
-                return pcm
+        loop = asyncio.get_event_loop()
+
+        def _generate_mp3() -> bytes:
+            tts = gTTS(text=text, lang="en", tld="co.in", slow=False)
+            buf = io.BytesIO()
+            tts.write_to_fp(buf)
+            return buf.getvalue()
+
+        mp3_data = await loop.run_in_executor(None, _generate_mp3)
+
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-hide_banner", "-loglevel", "error",
+            "-i", "pipe:0",
+            "-f", "s16le", "-ar", "16000", "-ac", "1",
+            "pipe:1",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await proc.communicate(mp3_data)
+        logger.info(f"[TTS] gTTS produced {len(stdout)} PCM bytes")
+        return stdout
     except Exception as e:
-        logger.error(f"[TTS] Deepgram TTS error: {e}")
+        logger.error(f"[TTS] gTTS error: {e}")
         return b""
 
 

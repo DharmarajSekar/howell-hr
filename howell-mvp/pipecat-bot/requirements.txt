@@ -15,3 +15,6 @@ numpy==1.26.4
 
 # Environment loading
 python-dotenv==1.0.1
+
+# Indian English TTS — Google Text-to-Speech (tld='co.in')
+gtts==2.5.1
