@@ -128,9 +128,11 @@ async def text_to_pcm(text: str) -> bytes:
 
         mp3_data = await loop.run_in_executor(None, _generate_mp3)
 
+        # atempo=1.25 speeds gTTS (~105 WPM) to ~130 WPM — natural Indian professional pace
         proc = await asyncio.create_subprocess_exec(
             "ffmpeg", "-hide_banner", "-loglevel", "error",
             "-i", "pipe:0",
+            "-filter:a", "atempo=1.25",
             "-f", "s16le", "-ar", "16000", "-ac", "1",
             "pipe:1",
             stdin=asyncio.subprocess.PIPE,
@@ -138,7 +140,7 @@ async def text_to_pcm(text: str) -> bytes:
             stderr=asyncio.subprocess.DEVNULL,
         )
         stdout, _ = await proc.communicate(mp3_data)
-        logger.info(f"[TTS] gTTS produced {len(stdout)} PCM bytes")
+        logger.info(f"[TTS] gTTS produced {len(stdout)} PCM bytes @ 1.25x speed")
         return stdout
     except Exception as e:
         logger.error(f"[TTS] gTTS error: {e}")
