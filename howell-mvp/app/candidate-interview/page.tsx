@@ -316,37 +316,35 @@ export default function CandidateInterviewPage() {
       console.log('[LiveKit] Handling remote track:', kind)
 
       if (kind === 'audio' || kind === 'microphone') {
-        // ── Step 1: ALWAYS play bot audio directly (guaranteed audio playback) ──
-        // Use LiveKit's track.attach() — the correct way to play LiveKit audio
-        try {
-          if (typeof track.attach === 'function') {
-            // LiveKit v2 preferred method
-            if (botAudioRef.current) {
-              track.attach(botAudioRef.current)
-            } else {
-              // Dynamic fallback — create element and append to body
-              const el = document.createElement('audio')
-              el.autoplay = true
-              el.style.display = 'none'
-              document.body.appendChild(el)
-              track.attach(el)
-            }
-          } else if (track.mediaStreamTrack) {
-            // Direct MediaStreamTrack fallback
-            const el = botAudioRef.current || document.createElement('audio')
-            el.autoplay = true
-            el.srcObject = new MediaStream([track.mediaStreamTrack])
-            el.play().catch(() => {})
-            if (!botAudioRef.current) document.body.appendChild(el)
-          }
-          console.log('[Audio] Bot audio attached for playback')
-        } catch (err) {
-          console.warn('[Audio] Failed to attach bot audio:', err)
-        }
-
-        // ── Step 2: ALSO route to Simli if ready (lip-sync enhancement) ──────
         if (track.mediaStreamTrack && simliClientRef.current) {
+          // ── Simli ready: route audio to Simli ONLY (handles both lip-sync + playback) ──
+          // Do NOT attach to botAudioRef too — that causes dual/overlapping audio
           pipeBotAudioToSimli(track.mediaStreamTrack)
+          console.log('[Audio] Routed bot audio to Simli exclusively')
+        } else {
+          // ── Fallback: Simli not ready — play audio directly via botAudioRef ──
+          try {
+            if (typeof track.attach === 'function') {
+              if (botAudioRef.current) {
+                track.attach(botAudioRef.current)
+              } else {
+                const el = document.createElement('audio')
+                el.autoplay = true
+                el.style.display = 'none'
+                document.body.appendChild(el)
+                track.attach(el)
+              }
+            } else if (track.mediaStreamTrack) {
+              const el = botAudioRef.current || document.createElement('audio')
+              el.autoplay = true
+              el.srcObject = new MediaStream([track.mediaStreamTrack])
+              el.play().catch(() => {})
+              if (!botAudioRef.current) document.body.appendChild(el)
+            }
+            console.log('[Audio] Bot audio attached directly (Simli not ready)')
+          } catch (err) {
+            console.warn('[Audio] Failed to attach bot audio:', err)
+          }
         }
 
         setBotSpeaking(true)
