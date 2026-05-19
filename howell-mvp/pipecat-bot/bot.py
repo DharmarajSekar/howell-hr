@@ -172,8 +172,12 @@ async def transcribe_pcm(pcm_bytes: bytes) -> str:
 # Audio helpers
 # ══════════════════════════════════════════════════════════════════════════════
 
-def pcm_has_voice(pcm: bytes, threshold: int = 600) -> bool:
-    """Simple energy-based voice activity detection."""
+def pcm_has_voice(pcm: bytes, threshold: int = 1500) -> bool:
+    """Energy-based VAD. Threshold 1500 filters ambient noise (fans, AC, room hum)
+    while reliably detecting normal speech (~2000-8000 average amplitude).
+    The old threshold of 600 was too sensitive — ambient noise caused has_voice
+    to stay True permanently, so silence was never detected and the bot never responded.
+    """
     total = 0
     count = 0
     for i in range(0, len(pcm) - 1, 2):
@@ -220,8 +224,13 @@ async def run_bot():
     utterance_lock     = asyncio.Lock()   # prevents concurrent STT→LLM→TTS cycles
     greeting_sent      = False            # guard against double greeting
     audio_buffer       = bytearray()
+    pre_buffer         = bytearray()      # rolling 350ms buffer before VAD triggers
     last_voice_ts      = 0.0
     candidate_speaking = False
+
+    # Pre-buffer: keep last 350ms of audio so first syllables are never cut off
+    # 350ms × 16000 samples/s × 2 bytes/sample = 11200 bytes
+    PRE_BUFFER_BYTES = int(SAMPLE_RATE * 0.35) * 2
 
     async def say(text: str):
         """Generate TTS and push to LiveKit."""
@@ -251,21 +260,24 @@ async def run_bot():
             await say(response)
 
     async def greet():
-        """Send welcome message + first question. Runs at most once."""
+        """Let Gemini generate the opening greeting + Q1.
+        This is critical: if we hardcode the greeting ourselves, Gemini sees Q1
+        already answered in the conversation and may re-ask it instead of progressing
+        to Q2. By letting Gemini generate the greeting, it correctly owns the full
+        question sequence from Q1 → Q2 → Q3 … → closing.
+        """
         nonlocal greeting_sent
         if greeting_sent:
             logger.info("[Bot] Greeting already sent — skipping duplicate")
             return
         greeting_sent = True
-        await asyncio.sleep(2.0)  # give candidate's browser time to subscribe to audio track
-        greeting = (
-            f"Hello {CANDIDATE}! I'm Meera, your AI interviewer from {COMPANY}. "
-            f"Welcome to your interview for the {JOB_TITLE} position. "
-            f"This is an AI-conducted interview and your responses will be reviewed by HR. "
-            f"Let's get started. {QUESTIONS[0] if QUESTIONS else 'Could you please start by introducing yourself?'}"
-        )
-        conversation.append({"role": "assistant", "content": greeting})
-        await say(greeting)
+        await asyncio.sleep(2.0)  # let candidate's browser subscribe to audio track
+        logger.info("[Bot] Generating greeting via Gemini…")
+        # conversation = [system_prompt] at this point — Gemini will greet + ask Q1
+        response = await call_gemini(conversation)
+        logger.info(f"[Bot] Greeting: {response[:100]}…")
+        conversation.append({"role": "assistant", "content": response})
+        await say(response)
 
     # ── LiveKit event handlers ─────────────────────────────────────────────────
 
@@ -285,14 +297,12 @@ async def run_bot():
         logger.info(f"[Bot] Subscribed to audio track from {participant.identity}")
 
         async def read_audio():
-            nonlocal audio_buffer, last_voice_ts, candidate_speaking
+            nonlocal audio_buffer, pre_buffer, last_voice_ts, candidate_speaking
             audio_stream = rtc.AudioStream(track)
             async for frame_event in audio_stream:
                 frame = frame_event.frame
 
                 # Safely convert frame data to numpy int16 array regardless of SDK version.
-                # Some livekit-rtc versions return frame.data as a ctypes array which
-                # bytes() misinterprets — np.frombuffer handles all buffer-protocol types.
                 try:
                     raw_bytes = bytes(frame.data)
                 except TypeError:
@@ -304,22 +314,34 @@ async def run_bot():
                 pcm16k = samples_16k.tobytes()
 
                 if bot_is_speaking.locked():
-                    continue  # Don't capture while bot is speaking
+                    pre_buffer.clear()   # don't accumulate pre-buffer while bot speaks
+                    continue
 
                 has_voice = pcm_has_voice(pcm16k)
                 now = time.time()
 
                 if has_voice:
+                    if not candidate_speaking:
+                        # First voice frame — prepend pre-buffer so first syllables are captured
+                        audio_buffer.extend(pre_buffer)
+                        pre_buffer.clear()
                     audio_buffer.extend(pcm16k)
                     last_voice_ts = now
                     candidate_speaking = True
-                elif candidate_speaking and (now - last_voice_ts) > 1.2:
-                    # Silence for 1.2s after speech → candidate finished
-                    candidate_speaking = False
-                    if len(audio_buffer) > SAMPLE_RATE:  # at least 0.5s of audio
-                        captured = bytes(audio_buffer)
-                        audio_buffer.clear()
-                        asyncio.ensure_future(handle_utterance(captured))
+                else:
+                    # Keep a rolling 350ms pre-buffer of recent non-voiced audio
+                    pre_buffer.extend(pcm16k)
+                    if len(pre_buffer) > PRE_BUFFER_BYTES:
+                        pre_buffer = pre_buffer[-PRE_BUFFER_BYTES:]
+
+                    if candidate_speaking and (now - last_voice_ts) > 0.8:
+                        # 0.8s of silence after speech → candidate finished (was 1.2s)
+                        candidate_speaking = False
+                        min_audio = int(SAMPLE_RATE * 0.25) * 2  # 0.25s minimum (was 0.5s)
+                        if len(audio_buffer) > min_audio:
+                            captured = bytes(audio_buffer)
+                            audio_buffer.clear()
+                            asyncio.ensure_future(handle_utterance(captured))
 
         asyncio.ensure_future(read_audio())
 

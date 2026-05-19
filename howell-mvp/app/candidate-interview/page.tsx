@@ -370,7 +370,7 @@ export default function CandidateInterviewPage() {
 
     function setupBotAudioMonitor(track: MediaStreamTrack) {
       try {
-        if (audioCtxRef.current) { audioCtxRef.current.close(); }
+        if (audioCtxRef.current) { audioCtxRef.current.close() }
         const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
         const source = ctx.createMediaStreamSource(new MediaStream([track]))
         const analyser = ctx.createAnalyser()
@@ -384,7 +384,14 @@ export default function CandidateInterviewPage() {
         botLevelTimerRef.current = setInterval(() => {
           analyser.getByteFrequencyData(data)
           const avg = data.reduce((a, b) => a + b, 0) / data.length
-          setBotSpeaking(avg > 8)
+          const nowSpeaking = avg > 8
+          setBotSpeaking(prev => {
+            if (prev && !nowSpeaking) {
+              // Bot just finished speaking → clear Simli buffer so avatar returns to idle
+              simliClientRef.current?.ClearBuffer?.()
+            }
+            return nowSpeaking
+          })
         }, 120)
       } catch (e) { console.warn('[Audio] Level monitor error:', e) }
     }
@@ -615,7 +622,8 @@ export default function CandidateInterviewPage() {
 
         {/* ── Simli Humanoid Avatar Panel ────────────────────────────────── */}
         <div
-          className="relative rounded-2xl overflow-hidden shadow-2xl bg-black flex-1 min-w-0"
+          className="relative rounded-2xl overflow-hidden shadow-2xl flex-1 min-w-0"
+          style={{ background: 'linear-gradient(160deg, #e8d5f7 0%, #d5e8fb 50%, #dff0e8 100%)' }}
         >
           {/* Simli video output */}
           <video
