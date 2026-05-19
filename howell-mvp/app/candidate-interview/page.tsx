@@ -245,14 +245,16 @@ export default function CandidateInterviewPage() {
       if (!sessionToken) throw new Error('No session token returned from Simli')
       console.log('[Simli] Session token obtained, starting client…')
 
-      // v3 constructor — NO transport='livekit': that routes Simli through LiveKit's infra
-      // and breaks phoneme-accurate lip sync. Use Simli's default WebRTC transport.
+      // transport='livekit' = Simli's OWN LiveKit server (wss://api.simli.ai) for avatar video.
+      // Nothing to do with the candidate's LiveKit room. Default is 'p2p' which requires ice
+      // servers — always pass 'livekit' explicitly to avoid "Ice Servers Required" throw.
       const client = new SimliClient(
         sessionToken,
         simliVideoRef.current,
         simliAudioRef.current,
-        null,          // iceServers — use Simli defaults
+        null,           // iceServers — not needed for livekit transport
         LogLevel.WARN,
+        'livekit',
       )
 
       await client.start()
@@ -269,68 +271,24 @@ export default function CandidateInterviewPage() {
     }
   }, [])
 
-  // ── Pipe bot audio → Simli via PCM sendAudioData (accurate phoneme lip sync) ──
-  // WHY sendAudioData instead of listenToMediastreamTrack:
-  //   WebRTC always resamples audio to 48kHz internally. Simli's phoneme detector
-  //   expects 16kHz PCM16. Passing a 48kHz WebRTC track gives Simli the wrong data,
-  //   causing generic mouth animation. We create a 16kHz AudioContext, capture the
-  //   audio as PCM16 chunks, and send them directly — exactly what Simli needs.
+  // ── Pipe bot audio → Simli for lip sync ─────────────────────────────────────
+  // listenToMediastreamTrack is the correct Simli v3 API:
+  //   - Internally creates a 16kHz AudioContext + AudioWorklet
+  //   - Resamples the WebRTC track (48kHz) to 16kHz automatically
+  //   - Sends PCM chunks to Simli for phoneme-driven lip animation
+  //   - Simli also re-outputs the audio through simliAudioRef (no separate playback needed)
   const pipeBotAudioToSimli = useCallback((mediaStreamTrack: MediaStreamTrack) => {
     if (!simliClientRef.current) return
     try {
-      // Close any existing AudioContext
-      if (audioCtxRef.current) { audioCtxRef.current.close() }
+      simliClientRef.current.listenToMediastreamTrack(mediaStreamTrack)
+      console.log('[Simli] listenToMediastreamTrack connected — lip sync active')
 
-      // 16kHz matches Simli's sendAudioData expected sample rate
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 })
-      audioCtxRef.current = ctx
-
-      const source = ctx.createMediaStreamSource(new MediaStream([mediaStreamTrack]))
-
-      // ── 1. Capture PCM chunks and send to Simli for lip sync ──────────────
-      // 512 samples @ 16kHz = 32ms per chunk — fine granularity for phoneme tracking
-      const processor = ctx.createScriptProcessor(512, 1, 1)
-      source.connect(processor)
-      processor.connect(ctx.destination) // must connect to stay active
-      processor.onaudioprocess = (e: AudioProcessingEvent) => {
-        if (!simliClientRef.current) return
-        const float32 = e.inputBuffer.getChannelData(0)
-        const pcm16   = new Int16Array(float32.length)
-        for (let i = 0; i < float32.length; i++) {
-          const clamped = Math.max(-1, Math.min(1, float32[i]))
-          pcm16[i] = Math.round(clamped * 32767)
-        }
-        simliClientRef.current.sendAudioData(new Uint8Array(pcm16.buffer))
-      }
-
-      // ── 2. Play audio through botAudioRef so candidate hears it ───────────
-      const dest = ctx.createMediaStreamDestination()
-      source.connect(dest)
-      if (botAudioRef.current) {
-        botAudioRef.current.srcObject = dest.stream
-        botAudioRef.current.play().catch(() => {})
-      }
-
-      // ── 3. Level monitor for speaking/listening indicator ─────────────────
-      const analyser = ctx.createAnalyser()
-      analyser.fftSize = 512
-      analyser.smoothingTimeConstant = 0.3
-      source.connect(analyser)
-      analyserRef.current = analyser
-      const data = new Uint8Array(analyser.frequencyBinCount)
-      if (botLevelTimerRef.current) clearInterval(botLevelTimerRef.current)
-      botLevelTimerRef.current = setInterval(() => {
-        analyser.getByteFrequencyData(data)
-        const avg = data.reduce((a, b) => a + b, 0) / data.length
-        setBotSpeaking(avg > 8)
-      }, 120)
-
-      setBotSpeaking(true)
-      console.log('[Simli] PCM sendAudioData pipeline connected at 16kHz — phoneme-accurate lip sync active')
+      // Level monitor so the Speaking/Listening indicator works
+      setupBotAudioMonitor(mediaStreamTrack)
     } catch (err) {
       console.warn('[Simli] Audio pipeline error:', err)
     }
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Join LiveKit room ──────────────────────────────────────────────────────
   useEffect(() => {
