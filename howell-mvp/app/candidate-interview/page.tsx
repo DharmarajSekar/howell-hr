@@ -67,8 +67,9 @@ export default function CandidateInterviewPage() {
   const [errorMsg,       setErrorMsg]       = useState('')
   const [micMuted,       setMicMuted]       = useState(false)
   const [networkQuality, setNetworkQuality] = useState<'good' | 'poor' | 'unknown'>('unknown')
-  const [simliReady,     setSimliReady]     = useState(false)
-  const [botSpeaking,    setBotSpeaking]    = useState(false)
+  const [simliReady,      setSimliReady]     = useState(false)
+  const [simliFailed,     setSimliFailed]    = useState(false)
+  const [botSpeaking,     setBotSpeaking]    = useState(false)
 
   const simliVideoRef  = useRef<HTMLVideoElement>(null)
   const simliAudioRef  = useRef<HTMLAudioElement>(null)
@@ -195,58 +196,75 @@ export default function CandidateInterviewPage() {
     if (!micMuted && status === 'active') { silenceCountRef.current = 0; setSilenceSeconds(0) }
   }, [micMuted, status])
 
+  // Reset silence counter whenever candidate is actively speaking
+  useEffect(() => {
+    if (candidateSpeaking && status === 'active') { silenceCountRef.current = 0; setSilenceSeconds(0) }
+  }, [candidateSpeaking, status])
+
   function enterFullscreen() {
     document.documentElement.requestFullscreen?.().then(() => setIsFullscreen(true)).catch(() => {})
   }
 
   // ── Initialise Simli (v3 API) ──────────────────────────────────────────────
   const initSimli = useCallback(async () => {
+    // 20-second hard timeout — if Simli hasn't connected by then, show fallback
+    const failTimer = setTimeout(() => {
+      if (!simliClientRef.current) {
+        console.warn('[Simli] Connection timeout after 20s — showing fallback avatar')
+        setSimliFailed(true)
+      }
+    }, 20000)
+
     try {
       // Fetch API key + face ID from our server proxy (keeps key off the client)
       const cfgRes = await fetch('/api/interviews/simli-session')
       if (!cfgRes.ok) {
-        console.warn('[Simli] Not configured — will show fallback avatar')
+        console.warn('[Simli] Not configured (status', cfgRes.status, ') — showing fallback avatar')
+        clearTimeout(failTimer)
+        setSimliFailed(true)
         return false
       }
       const { apiKey, faceId } = await cfgRes.json()
+      console.log('[Simli] Config received, faceId:', faceId)
 
       // Dynamic import — keeps bundle small and avoids SSR issues
       const { SimliClient, generateSimliSessionToken, LogLevel } = await import('simli-client')
 
       // v3: generateSimliSessionToken expects { apiKey, config: { faceId, handleSilence, ... } }
-      // faceId uses lowercase 'd' (per SDK type definition)
       const tokenData = await generateSimliSessionToken({
         apiKey,
         config: {
-          faceId:           faceId,  // lowercase 'd' — matches SimliSessionRequest interface
+          faceId:           faceId,
           handleSilence:    true,
           maxSessionLength: 3600,
           maxIdleTime:      300,
         },
       })
 
-      // Handle both snake_case and camelCase response formats
       const sessionToken = tokenData?.session_token || tokenData?.sessionToken
       if (!sessionToken) throw new Error('No session token returned from Simli')
+      console.log('[Simli] Session token obtained, starting client…')
 
-      // v3 constructor: SimliClient(sessionToken, videoEl, audioEl, iceServers, logLevel)
-      // NOTE: do NOT pass transport='livekit' — that routes Simli through LiveKit's infra
+      // v3 constructor — NO transport='livekit': that routes Simli through LiveKit's infra
       // and breaks phoneme-accurate lip sync. Use Simli's default WebRTC transport.
       const client = new SimliClient(
         sessionToken,
         simliVideoRef.current,
         simliAudioRef.current,
         null,          // iceServers — use Simli defaults
-        LogLevel.WARN, // only log warnings/errors
+        LogLevel.WARN,
       )
 
       await client.start()
+      clearTimeout(failTimer)
       simliClientRef.current = client
       setSimliReady(true)
-      console.log('[Simli] Avatar ready, faceId:', faceId)
+      console.log('[Simli] Avatar ready ✓ faceId:', faceId)
       return true
     } catch (err) {
-      console.warn('[Simli] Init error:', err)
+      clearTimeout(failTimer)
+      console.warn('[Simli] Init error — showing fallback avatar:', err)
+      setSimliFailed(true)
       return false
     }
   }, [])
@@ -652,7 +670,7 @@ export default function CandidateInterviewPage() {
           <audio ref={botAudioRef} autoPlay style={{ display: 'none' }} />
 
           {/* Loading state */}
-          {!simliReady && (
+          {!simliReady && !simliFailed && (
             <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-b from-gray-900 to-gray-950">
               <div className="relative mb-6">
                 <div className="w-24 h-24 rounded-full bg-purple-600/20 flex items-center justify-center">
@@ -663,7 +681,23 @@ export default function CandidateInterviewPage() {
                 <div className="absolute inset-0 rounded-full border-2 border-purple-500 border-t-transparent animate-spin" />
               </div>
               <p className="text-white font-semibold text-lg">Meera is joining…</p>
-              <p className="text-gray-400 text-sm mt-1">Meera is warming up</p>
+              <p className="text-gray-400 text-sm mt-1">Setting up avatar, please wait</p>
+            </div>
+          )}
+
+          {/* Fallback avatar — shown when Simli is unavailable */}
+          {!simliReady && simliFailed && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-b from-gray-900 to-gray-950">
+              <div className="relative mb-6">
+                <div className={`w-28 h-28 rounded-full bg-purple-700 flex items-center justify-center text-5xl font-bold text-white shadow-lg ${botSpeaking ? 'ring-4 ring-purple-400 ring-offset-2 ring-offset-gray-900' : ''}`}>
+                  M
+                </div>
+                {botSpeaking && (
+                  <div className="absolute inset-0 rounded-full border-2 border-purple-400/60 animate-ping" style={{ animationDuration: '1s' }} />
+                )}
+              </div>
+              <p className="text-white font-semibold text-lg">Meera · AI Interviewer</p>
+              <p className="text-gray-500 text-xs mt-1">{botSpeaking ? '🔊 Speaking…' : '👂 Listening…'}</p>
             </div>
           )}
 
