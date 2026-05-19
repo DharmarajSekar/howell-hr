@@ -110,7 +110,7 @@ export async function POST(request: NextRequest) {
       ELEVENLABS_API_KEY:    process.env.ELEVENLABS_API_KEY || 'not-used',  // kept for server.py validation compat
       ELEVENLABS_VOICE_ID:   process.env.ELEVENLABS_VOICE_ID || 'not-used',
       SIMLI_API_KEY:         process.env.SIMLI_API_KEY!,
-      SIMLI_FACE_ID:         process.env.SIMLI_FACE_ID || 'cace3ef7-a4c4-425d-a8cf-a5358eb0c427',
+      SIMLI_FACE_ID:         process.env.SIMLI_FACE_ID || 'b9e5fba3-071a-4e35-896e-211c4d6eaa7b',
       DEEPGRAM_API_KEY:      process.env.DEEPGRAM_API_KEY!,
     }
 

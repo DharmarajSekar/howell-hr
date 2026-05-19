@@ -613,8 +613,8 @@ export default function CandidateInterviewPage() {
                 </div>
                 <div className="absolute inset-0 rounded-full border-2 border-purple-500 border-t-transparent animate-spin" />
               </div>
-              <p className="text-white font-semibold text-lg">Alex is joining…</p>
-              <p className="text-gray-400 text-sm mt-1">AI Interviewer is warming up</p>
+              <p className="text-white font-semibold text-lg">Meera is joining…</p>
+              <p className="text-gray-400 text-sm mt-1">Meera is warming up</p>
             </div>
           )}
 
@@ -637,7 +637,7 @@ export default function CandidateInterviewPage() {
           {/* Name label */}
           <div className="absolute bottom-4 left-4 bg-black/70 backdrop-blur-sm px-3 py-1.5 rounded-xl text-sm font-semibold flex items-center gap-2">
             <div className={`w-2 h-2 rounded-full ${botSpeaking ? 'bg-purple-400 animate-pulse' : 'bg-green-500'}`} />
-            Alex · AI Interviewer
+            Meera · AI Interviewer
             {botSpeaking && <span className="text-xs text-purple-300 font-normal">Speaking</span>}
             {!botSpeaking && status === 'active' && <span className="text-xs text-green-300 font-normal">Listening</span>}
           </div>

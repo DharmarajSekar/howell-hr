@@ -15,7 +15,7 @@ export const dynamic = 'force-dynamic'
 
 export async function GET() {
   const apiKey = process.env.SIMLI_API_KEY
-  const faceId = process.env.SIMLI_FACE_ID || 'tmp9i8bbq' // professional female, free demo face
+  const faceId = process.env.SIMLI_FACE_ID || 'b9e5fba3-071a-4e35-896e-211c4d6eaa7b' // Meera — Indian female avatar
 
   if (!apiKey) {
     return NextResponse.json(

@@ -61,7 +61,7 @@ class StartBotRequest(BaseModel):
     ELEVENLABS_API_KEY: str = ""      # No longer used — bot uses edge-tts
     ELEVENLABS_VOICE_ID: str = ""     # No longer used — bot uses edge-tts
     SIMLI_API_KEY: str
-    SIMLI_FACE_ID: str = "cace3ef7-a4c4-425d-a8cf-a5358eb0c427"
+    SIMLI_FACE_ID: str = "b9e5fba3-071a-4e35-896e-211c4d6eaa7b"  # Meera — Indian female avatar
     DEEPGRAM_API_KEY: str
 
 

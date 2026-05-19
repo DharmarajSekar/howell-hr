@@ -58,7 +58,7 @@ def build_system_prompt() -> str:
     q_block = "\n".join(f"Q{i+1}: {q}" for i, q in enumerate(QUESTIONS))
     if not q_block:
         q_block = "(Ask general competency questions)"
-    return f"""You are Alex, a professional AI interviewer representing {COMPANY}.
+    return f"""You are Meera, a professional AI interviewer representing {COMPANY}.
 You are interviewing {CANDIDATE} for the position of {JOB_TITLE}.
 
 Interview questions to ask in order:
@@ -145,7 +145,7 @@ async def transcribe_pcm(pcm_bytes: bytes) -> str:
         return ""
     async with aiohttp.ClientSession() as session:
         async with session.post(
-            "https://api.deepgram.com/v1/listen?model=nova-2&language=en-US&punctuate=true",
+            "https://api.deepgram.com/v1/listen?model=nova-2&language=en-IN&punctuate=true",
             headers={
                 "Authorization": f"Token {DEEPGRAM_KEY}",
                 "Content-Type": "audio/raw;encoding=linear16;sample_rate=16000;channels=1",
@@ -204,7 +204,7 @@ async def run_bot():
 
     # Audio source for bot speech output
     audio_source = rtc.AudioSource(sample_rate=SAMPLE_RATE, num_channels=CHANNELS)
-    bot_track = rtc.LocalAudioTrack.create_audio_track("alex-voice", audio_source)
+    bot_track = rtc.LocalAudioTrack.create_audio_track("meera-voice", audio_source)
 
     # State
     conversation: list = [{"role": "system", "content": build_system_prompt()}]
@@ -237,7 +237,7 @@ async def run_bot():
     async def greet():
         await asyncio.sleep(1.5)  # Let candidate settle
         greeting = (
-            f"Hello {CANDIDATE}! I'm Alex, your AI interviewer from {COMPANY}. "
+            f"Hello {CANDIDATE}! I'm Meera, your AI interviewer from {COMPANY}. "
             f"Welcome to your interview for the {JOB_TITLE} position. "
             f"This is an AI-conducted interview — your responses will be reviewed by HR. "
             f"Let's begin. {QUESTIONS[0] if QUESTIONS else 'Could you start by introducing yourself?'}"
