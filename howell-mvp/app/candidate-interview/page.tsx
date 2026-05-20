@@ -80,6 +80,7 @@ export default function CandidateInterviewPage() {
   const pcRef             = useRef<RTCPeerConnection | null>(null)
   const heygenSessionId   = useRef<string | null>(null)
   const heygenReadyRef    = useRef(false)
+  const heygenFailedRef   = useRef(false)   // sync ref so speakHeyGen can check without stale closure
   const speakingRef       = useRef(false)
   const pendingMessages   = useRef<string[]>([])
   const speakTimerRef     = useRef<NodeJS.Timeout | null>(null)
@@ -204,15 +205,48 @@ export default function CandidateInterviewPage() {
     document.documentElement.requestFullscreen?.().then(() => setIsFullscreen(true)).catch(() => {})
   }
 
-  // ── HeyGen speak via REST ──────────────────────────────────────────────────
+  // ── Browser speech synthesis fallback (works with no API key) ───────────────
+  const speakFallback = useCallback((text: string): Promise<void> => {
+    return new Promise(resolve => {
+      if (typeof window === 'undefined' || !window.speechSynthesis) { resolve(); return }
+      window.speechSynthesis.cancel()
+      const utt = new SpeechSynthesisUtterance(text)
+      utt.rate  = 1.05
+      utt.pitch = 1.1
+      utt.volume = 1.0
+      // Prefer a female English voice if available
+      const voices = window.speechSynthesis.getVoices()
+      const voice  = voices.find(v => v.lang.startsWith('en') && /female|woman|zira|susan|karen|samantha/i.test(v.name))
+                  || voices.find(v => v.lang.startsWith('en-IN'))
+                  || voices.find(v => v.lang.startsWith('en'))
+      if (voice) utt.voice = voice
+      utt.onend  = () => resolve()
+      utt.onerror = () => resolve()
+      window.speechSynthesis.speak(utt)
+    })
+  }, [])
+
+  // ── HeyGen speak via REST (with speech synthesis fallback) ────────────────
   const speakHeyGen = useCallback(async (text: string) => {
-    // Queue if not ready or already speaking
+    // If HeyGen failed, speak immediately via browser TTS — no queuing needed
+    if (heygenFailedRef.current) {
+      if (speakingRef.current) { pendingMessages.current.push(text); return }
+      speakingRef.current = true
+      setBotSpeaking(true)
+      await speakFallback(text)
+      speakingRef.current = false
+      setBotSpeaking(false)
+      if (pendingMessages.current.length > 0) speakHeyGen(pendingMessages.current.shift()!)
+      return
+    }
+
+    // Queue if HeyGen not ready yet or already speaking
     if (!heygenReadyRef.current || speakingRef.current) {
       pendingMessages.current.push(text)
       return
     }
     const sessionId = heygenSessionId.current
-    if (!sessionId) return
+    if (!sessionId) { pendingMessages.current.push(text); return }
 
     speakingRef.current = true
     setBotSpeaking(true)
@@ -223,25 +257,18 @@ export default function CandidateInterviewPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'speak', sessionId, text }),
       })
-
-      // HeyGen REST returns immediately; estimate speaking duration
-      // ~10 chars/sec + 2.5s lead/trail buffer
+      // HeyGen REST returns immediately; estimate speaking duration ~10 chars/sec + 2.5s buffer
       const ms = Math.max(3500, (text.length / 10) * 1000 + 2500)
-      await new Promise<void>(resolve => {
-        speakTimerRef.current = setTimeout(resolve, ms)
-      })
+      await new Promise<void>(resolve => { speakTimerRef.current = setTimeout(resolve, ms) })
     } catch (err) {
-      console.warn('[HeyGen] Speak error:', err)
+      console.warn('[HeyGen] Speak error — falling back to browser TTS:', err)
+      await speakFallback(text)
     } finally {
       speakingRef.current = false
       setBotSpeaking(false)
-      // Drain queue — process next message if any
-      if (pendingMessages.current.length > 0) {
-        const next = pendingMessages.current.shift()!
-        speakHeyGen(next)
-      }
+      if (pendingMessages.current.length > 0) speakHeyGen(pendingMessages.current.shift()!)
     }
-  }, [])
+  }, [speakFallback])
 
   // ── Init HeyGen via native WebRTC (no SDK) ────────────────────────────────
   const initHeyGen = useCallback(async (): Promise<boolean> => {
@@ -256,7 +283,11 @@ export default function CandidateInterviewPage() {
 
       if (!res.ok || !data.sessionId) {
         console.warn('[HeyGen] Session creation failed:', data.error || data)
+        heygenFailedRef.current = true
         setHeygenFailed(true)
+        // Drain pending queue via browser TTS
+        const q = [...pendingMessages.current]; pendingMessages.current = []
+        q.forEach(msg => speakHeyGen(msg))
         return false
       }
 
@@ -298,7 +329,12 @@ export default function CandidateInterviewPage() {
 
       pc.onconnectionstatechange = () => {
         console.log('[HeyGen] WebRTC state:', pc.connectionState)
-        if (pc.connectionState === 'failed') setHeygenFailed(true)
+        if (pc.connectionState === 'failed') {
+          heygenFailedRef.current = true
+          setHeygenFailed(true)
+          const q = [...pendingMessages.current]; pendingMessages.current = []
+          q.forEach(msg => speakHeyGen(msg))
+        }
       }
 
       // 5. Set HeyGen's offer, create answer, send it back
@@ -316,7 +352,11 @@ export default function CandidateInterviewPage() {
       return true
     } catch (err) {
       console.error('[HeyGen] Init error:', err)
+      heygenFailedRef.current = true
       setHeygenFailed(true)
+      // Drain pending queue via browser TTS
+      const q = [...pendingMessages.current]; pendingMessages.current = []
+      q.forEach(msg => speakHeyGen(msg))
       return false
     }
   }, [speakHeyGen])
