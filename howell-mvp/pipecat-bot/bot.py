@@ -52,9 +52,11 @@ CHUNK_MS     = 20
 CHUNK_SAMPLES = SAMPLE_RATE * CHUNK_MS // 1000   # 320 samples
 CHUNK_BYTES   = CHUNK_SAMPLES * 2 * CHANNELS     # 640 bytes
 
-# Average HeyGen TTS pace (chars per second) used to estimate speaking duration
-# so the bot doesn't start listening while the avatar is still talking.
-HEYGEN_CHARS_PER_SEC = 12.0
+# Browser Speech Synthesis pace (chars per second) — used to estimate speaking
+# duration so the bot doesn't start listening while TTS is still playing.
+# Browser TTS runs ~16 chars/sec. Capped at 15s max to avoid long listen blocks.
+HEYGEN_CHARS_PER_SEC = 16.0
+MAX_SPEAK_BLOCK_SECS = 15.0   # never block listening for more than this long
 
 logger.info(f"[Config] Candidate={CANDIDATE} | Job={JOB_TITLE} | Questions={len(QUESTIONS)}")
 logger.info(f"[Config] LiveKit URL={LIVEKIT_URL}")
@@ -172,9 +174,11 @@ async def run_bot():
 
     # ── State ─────────────────────────────────────────────────────────────────
     conversation: list = [{"role": "system", "content": build_system_prompt()}]
-    bot_is_speaking     = asyncio.Lock()   # held while we wait for HeyGen to speak
+    bot_is_speaking     = asyncio.Lock()   # held while we wait for TTS to finish
     utterance_lock      = asyncio.Lock()   # prevents concurrent STT→LLM cycles
     greeting_sent       = False
+    greeting_lock       = asyncio.Lock()   # prevents double-greeting race condition
+    tts_done_event      = asyncio.Event()  # frontend signals when TTS has finished
     audio_buffer        = bytearray()
     pre_buffer          = bytearray()      # rolling 350ms pre-speech buffer
     last_voice_ts       = 0.0
@@ -211,17 +215,22 @@ async def run_bot():
             logger.error("[Bot] All publish_data attempts failed")
 
     async def _speak_raw(text: str):
-        """Send text → HeyGen and hold bot_is_speaking lock for estimated duration.
-        This prevents the VAD from processing candidate audio while HeyGen is talking.
-        Estimate: HEYGEN_CHARS_PER_SEC chars/sec, minimum 3s, plus 1.5s buffer.
+        """Send text to frontend TTS and hold bot_is_speaking lock until done.
+        Releases early if frontend sends a tts_done signal, otherwise falls back
+        to a time estimate. Capped at MAX_SPEAK_BLOCK_SECS to avoid long blocks.
         """
         async with bot_is_speaking:
-            logger.info(f"[Bot] Speaking via HeyGen: {text[:80]}…")
+            logger.info(f"[Bot] Speaking: {text[:80]}…")
+            tts_done_event.clear()
             await publish_speech(text)
-            # Estimated duration while avatar speaks — block VAD for this window
-            duration = max(3.0, len(text) / HEYGEN_CHARS_PER_SEC) + 1.5
-            logger.info(f"[Bot] Blocking VAD for {duration:.1f}s (estimated HeyGen speech)")
-            await asyncio.sleep(duration)
+            # Estimated duration — browser TTS at HEYGEN_CHARS_PER_SEC chars/sec
+            duration = min(MAX_SPEAK_BLOCK_SECS, max(3.0, len(text) / HEYGEN_CHARS_PER_SEC) + 1.5)
+            logger.info(f"[Bot] Blocking VAD for up to {duration:.1f}s (waiting for tts_done or timeout)")
+            try:
+                await asyncio.wait_for(tts_done_event.wait(), timeout=duration)
+                logger.info("[Bot] tts_done signal received — releasing VAD early")
+            except asyncio.TimeoutError:
+                logger.info(f"[Bot] TTS timeout after {duration:.1f}s — releasing VAD")
         logger.info("[Bot] Speaking window ended — resuming candidate listening")
 
     async def run_silence_watchdog():
@@ -266,12 +275,14 @@ async def run_bot():
 
     async def greet():
         """Gemini generates the opening greeting so it's included in conversation history.
-        Hardcoding the greeting causes Gemini to re-ask Q1 instead of moving to Q2.
+        Uses greeting_lock to prevent the race condition where participant_connected
+        and the already-in-room check both fire before either sets greeting_sent.
         """
         nonlocal greeting_sent
-        if greeting_sent:
-            return
-        greeting_sent = True
+        async with greeting_lock:
+            if greeting_sent:
+                return
+            greeting_sent = True
         # Wait for the candidate's browser to initialise HeyGen avatar (~5s typical)
         await asyncio.sleep(5.0)
         logger.info("[Bot] Requesting greeting from Gemini…")
@@ -287,6 +298,17 @@ async def run_bot():
         await say(response)
 
     # ── LiveKit event handlers ─────────────────────────────────────────────────
+
+    @room.on("data_received")
+    def on_data_received(data: rtc.DataPacket):
+        """Receive signals from the candidate's browser (e.g. tts_done)."""
+        try:
+            msg = json.loads(data.data.decode("utf-8"))
+            if msg.get("type") == "tts_done":
+                logger.info("[Bot] Received tts_done from frontend — releasing speaking lock")
+                tts_done_event.set()
+        except Exception:
+            pass
 
     @room.on("participant_connected")
     def on_participant_connected(participant: rtc.RemoteParticipant):
@@ -353,8 +375,8 @@ async def run_bot():
                     if len(pre_buffer) > PRE_BUFFER_BYTES:
                         pre_buffer = pre_buffer[-PRE_BUFFER_BYTES:]
 
-                    if candidate_speaking and (now - last_voice_ts) > 0.8:
-                        # 0.8s silence after speech → candidate finished
+                    if candidate_speaking and (now - last_voice_ts) > 2.0:
+                        # 2.0s silence after speech → candidate finished
                         candidate_speaking = False
                         min_bytes = int(SAMPLE_RATE * 0.25) * 2   # 0.25s minimum
                         if len(audio_buffer) > min_bytes:

@@ -205,10 +205,20 @@ export default function CandidateInterviewPage() {
     document.documentElement.requestFullscreen?.().then(() => setIsFullscreen(true)).catch(() => {})
   }
 
+  // ── Signal bot that TTS has finished so it can start listening immediately ───
+  const sendTtsDone = useCallback(() => {
+    try {
+      const room = roomRef.current
+      if (!room?.localParticipant) return
+      const payload = new TextEncoder().encode(JSON.stringify({ type: 'tts_done' }))
+      room.localParticipant.publishData(payload, { reliable: true }).catch(() => {})
+    } catch (_) {}
+  }, [])
+
   // ── Browser speech synthesis fallback (works with no API key) ───────────────
   const speakFallback = useCallback((text: string): Promise<void> => {
     return new Promise(resolve => {
-      if (typeof window === 'undefined' || !window.speechSynthesis) { resolve(); return }
+      if (typeof window === 'undefined' || !window.speechSynthesis) { sendTtsDone(); resolve(); return }
       window.speechSynthesis.cancel()
 
       const doSpeak = () => {
@@ -222,8 +232,8 @@ export default function CandidateInterviewPage() {
                     || voices.find(v => v.lang.startsWith('en-IN'))
                     || voices.find(v => v.lang.startsWith('en'))
         if (voice) utt.voice = voice
-        utt.onend   = () => resolve()
-        utt.onerror = () => resolve()
+        utt.onend   = () => { sendTtsDone(); resolve() }
+        utt.onerror = () => { sendTtsDone(); resolve() }
         window.speechSynthesis.speak(utt)
       }
 
@@ -237,7 +247,7 @@ export default function CandidateInterviewPage() {
         setTimeout(doSpeak, 1000)
       }
     })
-  }, [])
+  }, [sendTtsDone])
 
   // ── HeyGen speak via REST (with speech synthesis fallback) ────────────────
   const speakHeyGen = useCallback(async (text: string) => {
