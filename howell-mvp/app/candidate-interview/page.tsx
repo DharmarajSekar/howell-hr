@@ -76,13 +76,14 @@ export default function CandidateInterviewPage() {
   const [liveTranscript,    setLiveTranscript]    = useState('')
   const [candidateSpeaking, setCandidateSpeaking] = useState(false)
 
-  const localVideoRef     = useRef<HTMLVideoElement>(null)
-  const roomRef           = useRef<any>(null)
-  const convStateRef      = useRef<ConvState>('idle')
-  const recognitionRef    = useRef<any>(null)
-  const speakQueueRef     = useRef<string[]>([])
-  const isSpeakingRef     = useRef(false)
-  const liveTranscriptRef = useRef('')
+  const localVideoRef      = useRef<HTMLVideoElement>(null)
+  const roomRef            = useRef<any>(null)
+  const convStateRef       = useRef<ConvState>('idle')
+  const recognitionRef     = useRef<any>(null)
+  const recognitionGenRef  = useRef(0)   // Fix 1: generation counter prevents abort-restart loop
+  const speakQueueRef      = useRef<string[]>([])
+  const isSpeakingRef      = useRef(false)
+  const liveTranscriptRef  = useRef('')
 
   // ── Anti-cheat state ───────────────────────────────────────────────────────
   const [violations,       setViolations]      = useState<Violation[]>([])
@@ -164,6 +165,14 @@ export default function CandidateInterviewPage() {
       return
     }
     silenceTimer.current = setInterval(() => {
+      // Fix 3: Only count silence while it's the candidate's turn to speak.
+      // During bot_speaking / processing / idle, reset to 0 so bot talk time
+      // doesn't eat into the candidate's 45-second window.
+      if (convStateRef.current !== 'listening') {
+        silenceCountRef.current = 0
+        setSilenceSeconds(0)
+        return
+      }
       silenceCountRef.current += 1
       setSilenceSeconds(silenceCountRef.current)
       if (silenceCountRef.current === SILENCE_THRESHOLD) logViolation('long_silence')
@@ -195,6 +204,11 @@ export default function CandidateInterviewPage() {
 
   // ── Start listening via browser SpeechRecognition ─────────────────────────
   const startListening = useCallback(() => {
+    // Fix 1: Increment generation so any callbacks from the previous instance
+    // know they've been superseded and must NOT restart (breaks the abort loop).
+    recognitionGenRef.current += 1
+    const myGen = recognitionGenRef.current
+
     // Stop any existing recognition session
     try { recognitionRef.current?.abort() } catch (_) {}
 
@@ -225,9 +239,12 @@ export default function CandidateInterviewPage() {
       try { rec.stop() } catch (_) {}   // fires onend which does the actual send
     }
 
-    rec.onstart = () => console.log('[STT] Listening started')
+    rec.onstart = () => console.log('[STT] Listening started (gen', myGen, ')')
 
     rec.onresult = (e: any) => {
+      // Discard events from superseded instances
+      if (recognitionGenRef.current !== myGen) return
+
       let interim = ''
       for (let i = e.resultIndex; i < e.results.length; i++) {
         if (e.results[i].isFinal) {
@@ -254,11 +271,16 @@ export default function CandidateInterviewPage() {
       }
     }
 
-    rec.onspeechend = () => setCandidateSpeaking(false)
+    rec.onspeechend = () => {
+      if (recognitionGenRef.current !== myGen) return
+      setCandidateSpeaking(false)
+    }
 
     rec.onend = () => {
       if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null }
       setCandidateSpeaking(false)
+      // Fix 1: If we've been superseded, do NOT restart — this breaks the loop.
+      if (recognitionGenRef.current !== myGen) return
       if (convStateRef.current !== 'listening') return
       const transcript = finalTranscript.trim()
       if (transcript.length > 2) {
@@ -270,19 +292,25 @@ export default function CandidateInterviewPage() {
       } else {
         // Nothing captured — restart listening after short delay
         setTimeout(() => {
-          if (convStateRef.current === 'listening') startListening()
+          if (convStateRef.current === 'listening' && recognitionGenRef.current === myGen) {
+            startListening()
+          }
         }, 400)
       }
     }
 
     rec.onerror = (e: any) => {
-      console.warn('[STT] Error:', e.error)
+      console.warn('[STT] Error (gen', myGen, '):', e.error)
+      // Fix 1: Discard error callbacks from superseded instances
+      if (recognitionGenRef.current !== myGen) return
       setCandidateSpeaking(false)
       if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null }
       // Restart on recoverable errors
       if (['no-speech', 'audio-capture', 'network'].includes(e.error) && convStateRef.current === 'listening') {
         setTimeout(() => {
-          if (convStateRef.current === 'listening') startListening()
+          if (convStateRef.current === 'listening' && recognitionGenRef.current === myGen) {
+            startListening()
+          }
         }, 500)
       }
     }
@@ -345,12 +373,21 @@ export default function CandidateInterviewPage() {
       window.speechSynthesis.speak(utt)
     }
 
+    // Fix 2: Guard so doSpeak runs at most once, even if both onvoiceschanged
+    // AND the setTimeout fire (which causes duplicate TTS + duplicate startListening).
+    let spoken = false
+    const doSpeakOnce = () => {
+      if (spoken) return
+      spoken = true
+      doSpeak()
+    }
+
     const voices = window.speechSynthesis?.getVoices() || []
     if (voices.length > 0) {
-      doSpeak()
+      doSpeakOnce()
     } else {
-      if (window.speechSynthesis) window.speechSynthesis.onvoiceschanged = doSpeak
-      setTimeout(doSpeak, 800)
+      if (window.speechSynthesis) window.speechSynthesis.onvoiceschanged = doSpeakOnce
+      setTimeout(doSpeakOnce, 800)
     }
   }, [startListening])
 
