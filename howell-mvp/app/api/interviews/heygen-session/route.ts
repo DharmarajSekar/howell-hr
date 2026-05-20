@@ -35,8 +35,8 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}))
     const {
-      avatarName = 'Kristin_public_3_20240108',
-      quality    = 'medium',
+      avatarName = process.env.HEYGEN_AVATAR_ID || 'Emery_public_1',
+      quality    = 'low',
       voiceId,
     } = body
 

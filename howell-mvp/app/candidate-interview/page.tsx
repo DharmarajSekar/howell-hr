@@ -5,7 +5,10 @@
  * =============================================================
  * Architecture:
  *   Railway bot (STT → Gemini) → LiveKit data channel (text)
- *   → HeyGen avatar.speak() → perfect lip-synced video in browser
+ *   → HeyGen REST API + native WebRTC → lip-synced avatar video
+ *
+ * No npm SDK needed — uses browser RTCPeerConnection directly with
+ * the existing /api/interviews/heygen-session server route.
  *
  * URL params:
  *   ?room=<livekit-room-name>
@@ -41,7 +44,7 @@ const VIOLATION_META: Record<ViolationType, { title: string; desc: string; icon:
 }
 
 const TAB_SWITCH_LIMIT  = 3
-const SILENCE_THRESHOLD = 45   // seconds
+const SILENCE_THRESHOLD = 45
 
 export default function CandidateInterviewPage() {
   // ── URL params ─────────────────────────────────────────────────────────────
@@ -71,15 +74,17 @@ export default function CandidateInterviewPage() {
   const [heygenFailed,   setHeygenFailed]   = useState(false)
   const [botSpeaking,    setBotSpeaking]    = useState(false)
 
-  const heygenVideoRef = useRef<HTMLVideoElement>(null)
-  const localVideoRef  = useRef<HTMLVideoElement>(null)
-  const roomRef        = useRef<any>(null)
-  const heygenRef      = useRef<any>(null)      // StreamingAvatar instance
-  const pendingMessages = useRef<string[]>([])  // messages queued before HeyGen is ready
-  const heygenReadyRef  = useRef(false)
-  const speakingRef     = useRef(false)         // prevents concurrent speak calls
+  const heygenVideoRef    = useRef<HTMLVideoElement>(null)
+  const localVideoRef     = useRef<HTMLVideoElement>(null)
+  const roomRef           = useRef<any>(null)
+  const pcRef             = useRef<RTCPeerConnection | null>(null)
+  const heygenSessionId   = useRef<string | null>(null)
+  const heygenReadyRef    = useRef(false)
+  const speakingRef       = useRef(false)
+  const pendingMessages   = useRef<string[]>([])
+  const speakTimerRef     = useRef<NodeJS.Timeout | null>(null)
 
-  const speechRecRef       = useRef<any>(null)
+  const speechRecRef        = useRef<any>(null)
   const [liveTranscript,    setLiveTranscript]    = useState('')
   const [candidateSpeaking, setCandidateSpeaking] = useState(false)
 
@@ -97,7 +102,7 @@ export default function CandidateInterviewPage() {
   const activeStatusRef = useRef<Status>('init')
   useEffect(() => { activeStatusRef.current = status }, [status])
 
-  // ── Live transcription via Web Speech API ─────────────────────────────────
+  // ── Live transcription ─────────────────────────────────────────────────────
   useEffect(() => {
     if (status !== 'active') return
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
@@ -108,14 +113,12 @@ export default function CandidateInterviewPage() {
     rec.lang = 'en-US'
     rec.onresult = (e: any) => {
       let text = ''
-      for (let i = 0; i < e.results.length; i++) {
-        text += e.results[i][0].transcript
-      }
+      for (let i = 0; i < e.results.length; i++) text += e.results[i][0].transcript
       setLiveTranscript(text)
       setCandidateSpeaking(!e.results[e.results.length - 1].isFinal)
     }
     rec.onerror = () => {}
-    rec.onend = () => { try { rec.start() } catch(e){} }
+    rec.onend   = () => { try { rec.start() } catch(e){} }
     try { rec.start() } catch(e) {}
     speechRecRef.current = rec
     return () => { try { rec.stop() } catch(e) {} }
@@ -129,8 +132,8 @@ export default function CandidateInterviewPage() {
       const updated  = existing
         ? prev.map(v => v.type === type ? { ...v, count: v.count + 1, timestamp: ts } : v)
         : [...prev, { type, details, timestamp: ts, count: 1 }]
-      const tabCount  = updated.find(v => v.type === 'tab_switch')?.count || 0
-      const fsCount   = updated.find(v => v.type === 'fullscreen_exit')?.count || 0
+      const tabCount = updated.find(v => v.type === 'tab_switch')?.count || 0
+      const fsCount  = updated.find(v => v.type === 'fullscreen_exit')?.count || 0
       setRiskLevel(tabCount + fsCount >= TAB_SWITCH_LIMIT ? 'high' : tabCount + fsCount >= 1 ? 'medium' : 'low')
       return updated
     })
@@ -148,33 +151,31 @@ export default function CandidateInterviewPage() {
   // ── Anti-cheat hooks ───────────────────────────────────────────────────────
   useEffect(() => {
     if (!applicationId) return
-    const handleVisibility = () => {
+    const h = () => {
       if (document.hidden && activeStatusRef.current === 'active') {
         tabSwitchCount.current += 1
-        logViolation('tab_switch', `Tab hidden (occurrence ${tabSwitchCount.current})`)
+        logViolation('tab_switch', `Tab hidden (${tabSwitchCount.current})`)
       }
     }
-    document.addEventListener('visibilitychange', handleVisibility)
-    return () => document.removeEventListener('visibilitychange', handleVisibility)
+    document.addEventListener('visibilitychange', h)
+    return () => document.removeEventListener('visibilitychange', h)
   }, [applicationId, logViolation])
 
   useEffect(() => {
     if (!applicationId) return
-    const handlePaste = () => {
-      if (activeStatusRef.current === 'active') logViolation('paste_detected', 'Clipboard paste during interview')
-    }
-    document.addEventListener('paste', handlePaste)
-    return () => document.removeEventListener('paste', handlePaste)
+    const h = () => { if (activeStatusRef.current === 'active') logViolation('paste_detected') }
+    document.addEventListener('paste', h)
+    return () => document.removeEventListener('paste', h)
   }, [applicationId, logViolation])
 
   useEffect(() => {
-    const handleFsChange = () => {
+    const h = () => {
       const inFs = !!document.fullscreenElement
       setIsFullscreen(inFs)
-      if (!inFs && activeStatusRef.current === 'active') logViolation('fullscreen_exit', 'Exited fullscreen during interview')
+      if (!inFs && activeStatusRef.current === 'active') logViolation('fullscreen_exit')
     }
-    document.addEventListener('fullscreenchange', handleFsChange)
-    return () => document.removeEventListener('fullscreenchange', handleFsChange)
+    document.addEventListener('fullscreenchange', h)
+    return () => document.removeEventListener('fullscreenchange', h)
   }, [logViolation])
 
   useEffect(() => {
@@ -186,7 +187,7 @@ export default function CandidateInterviewPage() {
     silenceTimer.current = setInterval(() => {
       silenceCountRef.current += 1
       setSilenceSeconds(silenceCountRef.current)
-      if (silenceCountRef.current === SILENCE_THRESHOLD) logViolation('long_silence', `Silent for ${SILENCE_THRESHOLD}s`)
+      if (silenceCountRef.current === SILENCE_THRESHOLD) logViolation('long_silence')
     }, 1000)
     return () => { if (silenceTimer.current) clearInterval(silenceTimer.current) }
   }, [status, logViolation])
@@ -203,30 +204,38 @@ export default function CandidateInterviewPage() {
     document.documentElement.requestFullscreen?.().then(() => setIsFullscreen(true)).catch(() => {})
   }
 
-  // ── HeyGen avatar speak ────────────────────────────────────────────────────
+  // ── HeyGen speak via REST ──────────────────────────────────────────────────
   const speakHeyGen = useCallback(async (text: string) => {
-    if (!heygenRef.current || speakingRef.current) {
-      // Queue if avatar not ready or already speaking
-      if (!heygenReadyRef.current) {
-        pendingMessages.current.push(text)
-      }
+    // Queue if not ready or already speaking
+    if (!heygenReadyRef.current || speakingRef.current) {
+      pendingMessages.current.push(text)
       return
     }
+    const sessionId = heygenSessionId.current
+    if (!sessionId) return
+
     speakingRef.current = true
     setBotSpeaking(true)
+
     try {
-      const { TaskType, TaskMode } = await import('@heygen/streaming-avatar')
-      await heygenRef.current.speak({
-        text,
-        taskType: TaskType.REPEAT,
-        taskMode: TaskMode.SYNC,   // awaits until avatar finishes speaking
+      await fetch('/api/interviews/heygen-session', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'speak', sessionId, text }),
+      })
+
+      // HeyGen REST returns immediately; estimate speaking duration
+      // ~10 chars/sec + 2.5s lead/trail buffer
+      const ms = Math.max(3500, (text.length / 10) * 1000 + 2500)
+      await new Promise<void>(resolve => {
+        speakTimerRef.current = setTimeout(resolve, ms)
       })
     } catch (err) {
       console.warn('[HeyGen] Speak error:', err)
     } finally {
       speakingRef.current = false
       setBotSpeaking(false)
-      // Drain the queue — speak any messages that arrived while we were busy
+      // Drain queue — process next message if any
       if (pendingMessages.current.length > 0) {
         const next = pendingMessages.current.shift()!
         speakHeyGen(next)
@@ -234,74 +243,79 @@ export default function CandidateInterviewPage() {
     }
   }, [])
 
-  // ── Initialise HeyGen streaming avatar ────────────────────────────────────
+  // ── Init HeyGen via native WebRTC (no SDK) ────────────────────────────────
   const initHeyGen = useCallback(async (): Promise<boolean> => {
     try {
-      const cfgRes = await fetch('/api/interviews/heygen-token', { method: 'POST' })
-      if (!cfgRes.ok) {
-        console.warn('[HeyGen] Token endpoint returned', cfgRes.status, '— showing fallback')
+      // 1. Create HeyGen streaming session
+      const res = await fetch('/api/interviews/heygen-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ quality: 'low' }),  // avatarName set by env var on server
+      })
+      const data = await res.json()
+
+      if (!res.ok || !data.sessionId) {
+        console.warn('[HeyGen] Session creation failed:', data.error || data)
         setHeygenFailed(true)
         return false
       }
-      const { token: hgToken, avatarId, voiceId } = await cfgRes.json()
-      if (!hgToken) {
-        console.warn('[HeyGen] No token returned — showing fallback')
-        setHeygenFailed(true)
-        return false
-      }
 
-      const {
-        default: StreamingAvatar,
-        StreamingEvents,
-        AvatarQuality,
-        VoiceEmotion,
-      } = await import('@heygen/streaming-avatar')
+      const { sessionId, sdp: offerSdp, iceServers = [], iceServers2 = [] } = data
+      heygenSessionId.current = sessionId
 
-      const avatar = new StreamingAvatar({ token: hgToken })
-      heygenRef.current = avatar
+      // 2. Create WebRTC peer connection with HeyGen's ICE servers
+      const pc = new RTCPeerConnection({
+        iceServers: [...iceServers, ...iceServers2],
+      })
+      pcRef.current = pc
 
-      // Stream ready → attach MediaStream to video element
-      avatar.on(StreamingEvents.STREAM_READY, (event: any) => {
-        const stream = event.detail as MediaStream
-        if (heygenVideoRef.current) {
-          heygenVideoRef.current.srcObject = stream
+      // 3. When avatar video/audio arrives → attach to video element
+      pc.ontrack = (event) => {
+        console.log('[HeyGen] Track received:', event.track.kind)
+        if (event.track.kind === 'video' && heygenVideoRef.current && !heygenReadyRef.current) {
+          heygenVideoRef.current.srcObject = event.streams[0]
           heygenVideoRef.current.play().catch(console.error)
+          heygenReadyRef.current = true
+          setHeygenReady(true)
+          console.log('[HeyGen] Avatar stream ready ✓')
+          // Drain any messages that arrived before avatar was ready
+          const queue = [...pendingMessages.current]
+          pendingMessages.current = []
+          queue.forEach(msg => speakHeyGen(msg))
         }
-        console.log('[HeyGen] Stream ready ✓')
-        heygenReadyRef.current = true
-        setHeygenReady(true)
-        // Drain any messages that arrived before avatar was ready
-        while (pendingMessages.current.length > 0) {
-          const msg = pendingMessages.current.shift()!
-          speakHeyGen(msg)
+      }
+
+      // 4. Forward ICE candidates to HeyGen
+      pc.onicecandidate = ({ candidate }) => {
+        if (candidate && heygenSessionId.current) {
+          fetch('/api/interviews/heygen-session', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionId: heygenSessionId.current, candidate }),
+          }).catch(() => {})
         }
+      }
+
+      pc.onconnectionstatechange = () => {
+        console.log('[HeyGen] WebRTC state:', pc.connectionState)
+        if (pc.connectionState === 'failed') setHeygenFailed(true)
+      }
+
+      // 5. Set HeyGen's offer, create answer, send it back
+      await pc.setRemoteDescription(new RTCSessionDescription(offerSdp))
+      const answer = await pc.createAnswer()
+      await pc.setLocalDescription(answer)
+
+      await fetch('/api/interviews/heygen-session', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'start', sessionId, sdp: answer }),
       })
 
-      avatar.on(StreamingEvents.STREAM_DISCONNECTED, () => {
-        console.warn('[HeyGen] Stream disconnected')
-        setBotSpeaking(false)
-        speakingRef.current = false
-      })
-
-      // Start the streaming avatar session
-      await avatar.createStartAvatar({
-        quality:   AvatarQuality.Low,   // Low quality = fewer credits consumed on trial
-        avatarName: avatarId,
-        language:  'en',
-        ...(voiceId ? {
-          voice: {
-            voiceId,
-            rate:    1.05,
-            emotion: VoiceEmotion.FRIENDLY,
-          }
-        } : {}),
-        disableIdleTimeout: true,
-      })
-
-      console.log('[HeyGen] Avatar session started, avatarId:', avatarId)
+      console.log('[HeyGen] WebRTC handshake complete, waiting for stream…')
       return true
     } catch (err) {
-      console.error('[HeyGen] Init failed:', err)
+      console.error('[HeyGen] Init error:', err)
       setHeygenFailed(true)
       return false
     }
@@ -316,7 +330,7 @@ export default function CandidateInterviewPage() {
     const join = async () => {
       setStatus('joining')
 
-      // Init HeyGen avatar first — must be ready before bot sends the greeting
+      // Init HeyGen avatar before joining LiveKit
       await initHeyGen()
 
       try {
@@ -338,17 +352,16 @@ export default function CandidateInterviewPage() {
               room.localParticipant.setMicrophoneEnabled(true),
             ])
             if (camPub?.track && localVideoRef.current) camPub.track.attach(localVideoRef.current)
-          } catch (mediaErr) {
-            console.warn('[LiveKit] Media error:', mediaErr)
+          } catch (e) {
+            console.warn('[LiveKit] Media error:', e)
           }
-          // Check if bot already in room
+          // Bot already in room?
           if (room.remoteParticipants.size > 0) setStatus('active')
         })
 
         room.on(RoomEvent.Disconnected, (reason: any) => {
-          console.log('[LiveKit] Disconnected:', reason)
           if (activeStatusRef.current === 'active') setStatus('ended')
-          else { setErrorMsg('The AI interviewer disconnected. Please generate a new link.'); setStatus('error') }
+          else { setErrorMsg('Connection lost. Please generate a new interview link.'); setStatus('error') }
         })
 
         room.on(RoomEvent.ConnectionStateChanged, (state: any) => {
@@ -356,31 +369,23 @@ export default function CandidateInterviewPage() {
           else if (state === ConnectionState.Connected) setNetworkQuality('good')
         })
 
-        // ── Bot joined → interview is active ──────────────────────────────────
+        // Bot joined → interview is active
         room.on(RoomEvent.ParticipantConnected, (participant: any) => {
-          console.log('[LiveKit] Participant joined:', participant.identity)
+          console.log('[LiveKit] Bot joined:', participant.identity)
           setStatus('active')
         })
 
-        // ── Bot text via data channel → HeyGen speaks ─────────────────────────
-        room.on(RoomEvent.DataReceived, (payload: Uint8Array, _participant: any, _kind: any, topic?: string) => {
+        // ── Bot sends text via data channel → HeyGen speaks it ────────────────
+        room.on(RoomEvent.DataReceived, (payload: Uint8Array, _p: any, _k: any, topic?: string) => {
           if (topic !== 'bot_speech') return
           try {
             const { text } = JSON.parse(new TextDecoder().decode(payload))
             if (text) {
-              console.log('[LiveKit] Bot speech received:', text.slice(0, 60), '…')
+              console.log('[Bot] Received:', text.slice(0, 60) + '…')
               speakHeyGen(text)
             }
           } catch (e) {
-            console.warn('[LiveKit] Failed to parse data message')
-          }
-        })
-
-        room.on(RoomEvent.TrackSubscribed, (track: any, _pub: any, participant: any) => {
-          console.log('[LiveKit] Track subscribed:', track.kind, 'from', participant.identity)
-          // Attach candidate local video (camera track from server-side participant, if any)
-          if ((track.kind === 'video' || track.kind === 'camera') && localVideoRef.current) {
-            try { track.attach(localVideoRef.current) } catch (e) {}
+            console.warn('[LiveKit] Bad data message')
           }
         })
 
@@ -393,8 +398,8 @@ export default function CandidateInterviewPage() {
         await room.connect(lkUrl, token)
 
       } catch (err: any) {
-        console.error('[LiveKit] Error:', err)
-        setErrorMsg(err?.message || 'Failed to join interview room')
+        console.error('[LiveKit]', err)
+        setErrorMsg(err?.message || 'Failed to join room')
         setStatus('error')
       }
     }
@@ -403,7 +408,15 @@ export default function CandidateInterviewPage() {
 
     return () => {
       room?.disconnect().catch(() => {})
-      heygenRef.current?.stopAvatar?.().catch(() => {})
+      pcRef.current?.close()
+      if (speakTimerRef.current) clearTimeout(speakTimerRef.current)
+      if (heygenSessionId.current) {
+        fetch('/api/interviews/heygen-session', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId: heygenSessionId.current }),
+        }).catch(() => {})
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomName, lkUrl, token, consentGiven])
@@ -419,7 +432,14 @@ export default function CandidateInterviewPage() {
 
   function leaveCall() {
     roomRef.current?.disconnect().catch(() => {})
-    heygenRef.current?.stopAvatar?.().catch(() => {})
+    pcRef.current?.close()
+    if (heygenSessionId.current) {
+      fetch('/api/interviews/heygen-session', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: heygenSessionId.current }),
+      }).catch(() => {})
+    }
     setStatus('ended')
   }
 
@@ -515,12 +535,11 @@ export default function CandidateInterviewPage() {
   )
 
   // ══════════════════════════════════════════════════════════════════════════
-  // Main Interview UI — HeyGen streaming avatar
+  // Main Interview UI
   // ══════════════════════════════════════════════════════════════════════════
   return (
     <div className="min-h-screen bg-gray-950 text-white flex flex-col select-none">
 
-      {/* Violation Warning Overlay */}
       {activeWarning && (
         <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
           <div className="bg-red-900/95 border-2 border-red-500 rounded-2xl px-8 py-6 max-w-sm mx-4 text-center shadow-2xl">
@@ -532,14 +551,11 @@ export default function CandidateInterviewPage() {
         </div>
       )}
 
-      {/* Fullscreen nudge */}
       {!isFullscreen && status === 'active' && (
         <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-40 bg-yellow-900/90 border border-yellow-600 rounded-xl px-4 py-2.5 flex items-center gap-3 text-sm shadow-xl">
           <Maximize2 className="w-4 h-4 text-yellow-400 shrink-0" />
           <span className="text-yellow-200">Please return to fullscreen</span>
-          <button onClick={enterFullscreen} className="bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-1 rounded-lg text-xs font-semibold transition">
-            Go Fullscreen
-          </button>
+          <button onClick={enterFullscreen} className="bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-1 rounded-lg text-xs font-semibold transition">Go Fullscreen</button>
         </div>
       )}
 
@@ -577,15 +593,14 @@ export default function CandidateInterviewPage() {
         </div>
       </div>
 
-      {/* Video area — 50/50 split */}
+      {/* Video area */}
       <div className="flex-1 flex items-stretch p-4 gap-4 min-h-0 overflow-hidden">
 
-        {/* ── HeyGen Avatar Panel ─────────────────────────────────────────── */}
+        {/* HeyGen Avatar Panel */}
         <div
           className="relative rounded-2xl overflow-hidden shadow-2xl flex-1 min-w-0"
           style={{ background: 'linear-gradient(160deg, #e8d5f7 0%, #d5e8fb 50%, #dff0e8 100%)' }}
         >
-          {/* HeyGen video output */}
           <video
             ref={heygenVideoRef}
             autoPlay
@@ -593,7 +608,7 @@ export default function CandidateInterviewPage() {
             className={`w-full h-full object-cover transition-opacity duration-500 ${heygenReady ? 'opacity-100' : 'opacity-0'}`}
           />
 
-          {/* Loading state */}
+          {/* Loading */}
           {!heygenReady && !heygenFailed && (
             <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-b from-gray-900 to-gray-950">
               <div className="relative mb-6">
@@ -609,16 +624,14 @@ export default function CandidateInterviewPage() {
             </div>
           )}
 
-          {/* Fallback avatar — shown when HeyGen is unavailable */}
+          {/* Fallback */}
           {!heygenReady && heygenFailed && (
             <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-b from-gray-900 to-gray-950">
               <div className="relative mb-6">
                 <div className={`w-28 h-28 rounded-full bg-purple-700 flex items-center justify-center text-5xl font-bold text-white shadow-lg ${botSpeaking ? 'ring-4 ring-purple-400 ring-offset-2 ring-offset-gray-900' : ''}`}>
                   M
                 </div>
-                {botSpeaking && (
-                  <div className="absolute inset-0 rounded-full border-2 border-purple-400/60 animate-ping" style={{ animationDuration: '1s' }} />
-                )}
+                {botSpeaking && <div className="absolute inset-0 rounded-full border-2 border-purple-400/60 animate-ping" style={{ animationDuration: '1s' }} />}
               </div>
               <p className="text-white font-semibold text-lg">Meera · AI Interviewer</p>
               <p className="text-gray-500 text-xs mt-1">{botSpeaking ? '🔊 Speaking…' : '👂 Listening…'}</p>
@@ -633,7 +646,7 @@ export default function CandidateInterviewPage() {
             </>
           )}
 
-          {/* Listening indicator */}
+          {/* Listening pill */}
           {heygenReady && !botSpeaking && status === 'active' && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-black/60 backdrop-blur-sm px-3 py-1 rounded-full text-xs text-green-300 flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
@@ -649,21 +662,16 @@ export default function CandidateInterviewPage() {
             {!botSpeaking && status === 'active' && <span className="text-xs text-green-300 font-normal">Listening</span>}
           </div>
 
-          {/* Powered by badge */}
           <div className="absolute top-3 right-3 bg-black/60 backdrop-blur-sm px-2 py-1 rounded-lg text-xs text-gray-400 flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-green-400" />
             Powered by HeyGen
           </div>
         </div>
 
-        {/* ── Candidate local video ───────────────────────────────────────── */}
+        {/* Candidate video */}
         <div className="relative bg-gray-900 rounded-2xl overflow-hidden shadow-xl flex-1 min-w-0">
           <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-full object-cover scale-x-[-1]" />
-
-          {candidateSpeaking && (
-            <div className="absolute inset-0 rounded-2xl border-2 border-green-500/50 animate-pulse pointer-events-none" />
-          )}
-
+          {candidateSpeaking && <div className="absolute inset-0 rounded-2xl border-2 border-green-500/50 animate-pulse pointer-events-none" />}
           <div className="absolute bottom-3 left-3 bg-black/60 backdrop-blur-sm px-2.5 py-1 rounded-lg text-sm font-medium flex items-center gap-1.5">
             <div className={`w-2 h-2 rounded-full ${candidateSpeaking ? 'bg-green-400 animate-pulse' : 'bg-gray-500'}`} />
             {candidateName} · You
@@ -676,7 +684,7 @@ export default function CandidateInterviewPage() {
         </div>
       </div>
 
-      {/* Live transcription bar */}
+      {/* Transcript bar */}
       {status === 'active' && (
         <div className="px-4 pb-2">
           <div className="bg-gray-900/90 border border-gray-700 rounded-xl p-3">
@@ -685,12 +693,7 @@ export default function CandidateInterviewPage() {
                 <span className={`w-1.5 h-1.5 rounded-full ${candidateSpeaking ? 'bg-green-400 animate-pulse' : 'bg-gray-600'}`} />
                 Your Response
               </span>
-              <button
-                onClick={() => setLiveTranscript('')}
-                className="text-xs text-gray-500 hover:text-gray-300 transition px-2 py-0.5 rounded-lg hover:bg-gray-800"
-              >
-                Clear
-              </button>
+              <button onClick={() => setLiveTranscript('')} className="text-xs text-gray-500 hover:text-gray-300 transition px-2 py-0.5 rounded-lg hover:bg-gray-800">Clear</button>
             </div>
             <textarea
               value={liveTranscript}
@@ -698,11 +701,6 @@ export default function CandidateInterviewPage() {
               onCopy={e => e.preventDefault()}
               onCut={e => e.preventDefault()}
               onPaste={e => e.preventDefault()}
-              onKeyDown={e => {
-                if ((e.ctrlKey || e.metaKey) && ['c','v','x'].includes(e.key.toLowerCase())) {
-                  e.preventDefault()
-                }
-              }}
               onContextMenu={e => e.preventDefault()}
               placeholder="Your answer will appear here as you speak. You can edit if needed."
               rows={2}
@@ -715,32 +713,17 @@ export default function CandidateInterviewPage() {
 
       {/* Controls */}
       <div className="flex items-center justify-center gap-4 pb-6">
-        <button
-          onClick={toggleMic}
-          className={`w-12 h-12 rounded-full flex items-center justify-center transition-all ${micMuted ? 'bg-red-500 hover:bg-red-600' : 'bg-gray-700 hover:bg-gray-600'}`}
-          title={micMuted ? 'Unmute' : 'Mute'}
-        >
+        <button onClick={toggleMic} className={`w-12 h-12 rounded-full flex items-center justify-center transition-all ${micMuted ? 'bg-red-500 hover:bg-red-600' : 'bg-gray-700 hover:bg-gray-600'}`} title={micMuted ? 'Unmute' : 'Mute'}>
           {micMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
         </button>
-
-        <button
-          onClick={enterFullscreen}
-          className="w-12 h-12 rounded-full flex items-center justify-center transition-all bg-gray-700 hover:bg-gray-600"
-          title="Fullscreen"
-        >
+        <button onClick={enterFullscreen} className="w-12 h-12 rounded-full flex items-center justify-center transition-all bg-gray-700 hover:bg-gray-600" title="Fullscreen">
           <Maximize2 className="w-5 h-5" />
         </button>
-
-        <button
-          onClick={leaveCall}
-          className="w-12 h-12 rounded-full bg-red-600 hover:bg-red-700 flex items-center justify-center transition-all"
-          title="Leave interview"
-        >
+        <button onClick={leaveCall} className="w-12 h-12 rounded-full bg-red-600 hover:bg-red-700 flex items-center justify-center transition-all" title="Leave interview">
           <PhoneOff className="w-5 h-5" />
         </button>
       </div>
 
-      {/* Integrity footer */}
       <div className="text-center pb-4 px-4 text-xs text-gray-600 flex items-center justify-center gap-2">
         <ShieldAlert className="w-3 h-3" />
         This interview is monitored for integrity. All activity is logged for HR review.
