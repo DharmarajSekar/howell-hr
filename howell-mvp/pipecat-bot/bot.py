@@ -69,8 +69,10 @@ Rules:
 
 # ── Gemini ────────────────────────────────────────────────────────────────────
 
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+
 async def call_gemini(messages: list) -> str | None:
-    """Call Gemini 1.5 Flash. Returns response text, or None on error."""
+    """Call Gemini. Model controlled by GEMINI_MODEL env var (default: gemini-2.0-flash)."""
     system_text = ""
     chat_messages = []
     for m in messages:
@@ -96,16 +98,18 @@ async def call_gemini(messages: list) -> str | None:
     if system_text:
         payload["system_instruction"] = {"parts": [{"text": system_text}]}
 
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_KEY}"
+    logger.info(f"[Gemini] Calling model={GEMINI_MODEL} with {len(chat_messages)} turns")
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_KEY}",
+                url,
                 json=payload,
-                timeout=aiohttp.ClientTimeout(total=20),
+                timeout=aiohttp.ClientTimeout(total=30),
             ) as resp:
                 data = await resp.json()
                 if resp.status != 200:
-                    logger.error(f"[Gemini] Error {resp.status}: {data}")
+                    logger.error(f"[Gemini] HTTP {resp.status} — {data}")
                     return None
                 return data["candidates"][0]["content"]["parts"][0]["text"].strip()
     except Exception as e:
