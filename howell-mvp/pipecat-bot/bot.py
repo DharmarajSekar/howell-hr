@@ -193,15 +193,22 @@ async def run_bot():
     async def publish_speech(text: str):
         """Send response text to the frontend so HeyGen avatar can speak it."""
         payload = json.dumps({"text": text}).encode("utf-8")
-        try:
-            await room.local_participant.publish_data(
-                payload,
-                kind=rtc.DataPacket_Kind.RELIABLE,
-                topic="bot_speech",
-            )
-            logger.info(f"[Bot] Sent text ({len(text)} chars) via data channel")
-        except Exception as e:
-            logger.error(f"[Bot] Failed to publish data: {e}")
+        # Try multiple publish_data signatures — livekit SDK changed between versions
+        published = False
+        for attempt in [
+            lambda: room.local_participant.publish_data(payload, topic="bot_speech"),
+            lambda: room.local_participant.publish_data(payload, reliable=True),
+            lambda: room.local_participant.publish_data(payload),
+        ]:
+            try:
+                await attempt()
+                logger.info(f"[Bot] Sent text ({len(text)} chars) via data channel")
+                published = True
+                break
+            except Exception as e:
+                logger.warning(f"[Bot] publish_data attempt failed: {e}")
+        if not published:
+            logger.error("[Bot] All publish_data attempts failed")
 
     async def _speak_raw(text: str):
         """Send text → HeyGen and hold bot_is_speaking lock for estimated duration.

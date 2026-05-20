@@ -210,19 +210,32 @@ export default function CandidateInterviewPage() {
     return new Promise(resolve => {
       if (typeof window === 'undefined' || !window.speechSynthesis) { resolve(); return }
       window.speechSynthesis.cancel()
-      const utt = new SpeechSynthesisUtterance(text)
-      utt.rate  = 1.05
-      utt.pitch = 1.1
-      utt.volume = 1.0
-      // Prefer a female English voice if available
+
+      const doSpeak = () => {
+        const utt = new SpeechSynthesisUtterance(text)
+        utt.rate   = 1.05
+        utt.pitch  = 1.1
+        utt.volume = 1.0
+        // Prefer a female English voice
+        const voices = window.speechSynthesis.getVoices()
+        const voice  = voices.find(v => v.lang.startsWith('en') && /female|woman|zira|susan|karen|samantha|heera/i.test(v.name))
+                    || voices.find(v => v.lang.startsWith('en-IN'))
+                    || voices.find(v => v.lang.startsWith('en'))
+        if (voice) utt.voice = voice
+        utt.onend   = () => resolve()
+        utt.onerror = () => resolve()
+        window.speechSynthesis.speak(utt)
+      }
+
+      // Voices may not be loaded yet — wait for them if needed
       const voices = window.speechSynthesis.getVoices()
-      const voice  = voices.find(v => v.lang.startsWith('en') && /female|woman|zira|susan|karen|samantha/i.test(v.name))
-                  || voices.find(v => v.lang.startsWith('en-IN'))
-                  || voices.find(v => v.lang.startsWith('en'))
-      if (voice) utt.voice = voice
-      utt.onend  = () => resolve()
-      utt.onerror = () => resolve()
-      window.speechSynthesis.speak(utt)
+      if (voices.length > 0) {
+        doSpeak()
+      } else {
+        window.speechSynthesis.onvoiceschanged = () => { doSpeak() }
+        // Hard fallback: speak after 1s even if voices never load
+        setTimeout(doSpeak, 1000)
+      }
     })
   }, [])
 
@@ -415,17 +428,19 @@ export default function CandidateInterviewPage() {
           setStatus('active')
         })
 
-        // ── Bot sends text via data channel → HeyGen speaks it ────────────────
+        // ── Bot sends text via data channel → HeyGen/browser TTS speaks it ──
+        // No topic filter — older livekit SDK versions may not send topic field
         room.on(RoomEvent.DataReceived, (payload: Uint8Array, _p: any, _k: any, topic?: string) => {
-          if (topic !== 'bot_speech') return
           try {
-            const { text } = JSON.parse(new TextDecoder().decode(payload))
-            if (text) {
-              console.log('[Bot] Received:', text.slice(0, 60) + '…')
+            const decoded = new TextDecoder().decode(payload)
+            const msg = JSON.parse(decoded)
+            const text = msg.text || msg.content || msg.message
+            if (text && typeof text === 'string') {
+              console.log('[Bot] Data received (topic=' + (topic||'none') + '):', text.slice(0, 60) + '…')
               speakHeyGen(text)
             }
           } catch (e) {
-            console.warn('[LiveKit] Bad data message')
+            // Not JSON — ignore
           }
         })
 
