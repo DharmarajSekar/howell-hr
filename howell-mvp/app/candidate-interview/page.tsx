@@ -196,7 +196,7 @@ export default function CandidateInterviewPage() {
   // ── Start listening via browser SpeechRecognition ─────────────────────────
   const startListening = useCallback(() => {
     // Stop any existing recognition session
-    try { recognitionRef.current?.stop() } catch (_) {}
+    try { recognitionRef.current?.abort() } catch (_) {}
 
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
     if (!SR) {
@@ -210,17 +210,22 @@ export default function CandidateInterviewPage() {
     liveTranscriptRef.current = ''
 
     const rec = new SR()
-    rec.continuous      = false   // single utterance per session
-    rec.interimResults  = true
-    rec.lang            = 'en-IN'
+    // continuous=true so brief pauses don't cut off the answer mid-sentence.
+    // We use a 2.5s silence timer to detect when the candidate has finished speaking.
+    rec.continuous     = true
+    rec.interimResults = true
+    rec.lang           = 'en-IN'
     recognitionRef.current = rec
 
     let finalTranscript = ''
+    let silenceTimer: ReturnType<typeof setTimeout> | null = null
 
-    rec.onstart = () => {
-      console.log('[STT] Listening started')
-      setCandidateSpeaking(false)
+    const sendTranscriptNow = () => {
+      if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null }
+      try { rec.stop() } catch (_) {}   // fires onend which does the actual send
     }
+
+    rec.onstart = () => console.log('[STT] Listening started')
 
     rec.onresult = (e: any) => {
       let interim = ''
@@ -235,16 +240,27 @@ export default function CandidateInterviewPage() {
       setLiveTranscript(combined)
       liveTranscriptRef.current = combined
       setCandidateSpeaking(!!interim)
-      // Reset silence timer while candidate is speaking
+      // Reset anti-cheat silence counter while speaking
       silenceCountRef.current = 0
       setSilenceSeconds(0)
+
+      // Reset the 2.5s silence timer on every speech event.
+      // Only trigger after we have at least some final transcript.
+      if (finalTranscript.trim().length > 2) {
+        if (silenceTimer) clearTimeout(silenceTimer)
+        silenceTimer = setTimeout(() => {
+          if (convStateRef.current === 'listening') sendTranscriptNow()
+        }, 2500)
+      }
     }
 
+    rec.onspeechend = () => setCandidateSpeaking(false)
+
     rec.onend = () => {
+      if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null }
       setCandidateSpeaking(false)
-      // Only send if we're still in listening state (not interrupted by bot)
       if (convStateRef.current !== 'listening') return
-      const transcript = finalTranscript.trim() || liveTranscriptRef.current.trim()
+      const transcript = finalTranscript.trim()
       if (transcript.length > 2) {
         console.log('[STT] Sending transcript:', transcript)
         setConvState('processing')
@@ -252,22 +268,22 @@ export default function CandidateInterviewPage() {
         sendToBot('transcript', transcript)
         setLiveTranscript('')
       } else {
-        // No speech detected — restart listening
-        console.log('[STT] No speech detected — restarting')
+        // Nothing captured — restart listening after short delay
         setTimeout(() => {
           if (convStateRef.current === 'listening') startListening()
-        }, 500)
+        }, 400)
       }
     }
 
     rec.onerror = (e: any) => {
       console.warn('[STT] Error:', e.error)
       setCandidateSpeaking(false)
-      if (e.error === 'no-speech' && convStateRef.current === 'listening') {
-        // Restart on no-speech
+      if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null }
+      // Restart on recoverable errors
+      if (['no-speech', 'audio-capture', 'network'].includes(e.error) && convStateRef.current === 'listening') {
         setTimeout(() => {
           if (convStateRef.current === 'listening') startListening()
-        }, 300)
+        }, 500)
       }
     }
 

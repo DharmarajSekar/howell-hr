@@ -83,6 +83,12 @@ async def call_gemini(messages: list) -> str | None:
     if not chat_messages:
         chat_messages = [{"role": "user", "parts": [{"text": "Please begin the interview now."}]}]
 
+    # Gemini requires conversations to start with a "user" turn.
+    # If the first message is "model" (e.g. greeting was added without a priming user turn),
+    # insert a dummy user turn so the API doesn't reject the request.
+    if chat_messages and chat_messages[0]["role"] == "model":
+        chat_messages.insert(0, {"role": "user", "parts": [{"text": "Please begin the interview."}]})
+
     payload: dict = {
         "contents": chat_messages,
         "generationConfig": {"maxOutputTokens": 300, "temperature": 0.7},
@@ -150,6 +156,8 @@ async def run_bot():
         # Give frontend 3 seconds to fully connect and set up TTS
         await asyncio.sleep(3.0)
         logger.info("[Bot] Generating greeting via Gemini…")
+        # Add priming user turn so Gemini conversation starts correctly (user → model → user → model…)
+        conversation.append({"role": "user", "content": "Please begin the interview."})
         response = await call_gemini(conversation)
         if response is None:
             response = (
