@@ -1,14 +1,14 @@
 'use client'
 
 /**
- * Candidate Interview Page — LiveKit + HeyGen Streaming Avatar
- * =============================================================
+ * Candidate Interview Page — LiveKit + Browser STT + Browser TTS
+ * ===============================================================
  * Architecture:
- *   Railway bot (STT → Gemini) → LiveKit data channel (text)
- *   → HeyGen REST API + native WebRTC → lip-synced avatar video
+ *   Browser SpeechRecognition (STT) → LiveKit data channel (transcript text)
+ *   → Railway bot (Gemini) → LiveKit data channel (response text)
+ *   → Browser SpeechSynthesis (TTS) → start listening again → repeat
  *
- * No npm SDK needed — uses browser RTCPeerConnection directly with
- * the existing /api/interviews/heygen-session server route.
+ * Avatar: Animated placeholder now. Simli lip-sync avatar — coming next.
  *
  * URL params:
  *   ?room=<livekit-room-name>
@@ -25,7 +25,8 @@ import {
   Maximize2, Eye, Clock
 } from 'lucide-react'
 
-type Status = 'init' | 'joining' | 'waiting_for_bot' | 'active' | 'ended' | 'error'
+type Status    = 'init' | 'joining' | 'waiting_for_bot' | 'active' | 'ended' | 'error'
+type ConvState = 'idle' | 'bot_speaking' | 'listening' | 'processing'
 type ViolationType = 'tab_switch' | 'fullscreen_exit' | 'camera_disabled' | 'paste_detected' | 'long_silence'
 
 interface Violation {
@@ -70,24 +71,18 @@ export default function CandidateInterviewPage() {
   const [errorMsg,       setErrorMsg]       = useState('')
   const [micMuted,       setMicMuted]       = useState(false)
   const [networkQuality, setNetworkQuality] = useState<'good' | 'poor' | 'unknown'>('unknown')
-  const [heygenReady,    setHeygenReady]    = useState(false)
-  const [heygenFailed,   setHeygenFailed]   = useState(false)
+  const [convState,      setConvState]      = useState<ConvState>('idle')
   const [botSpeaking,    setBotSpeaking]    = useState(false)
-
-  const heygenVideoRef    = useRef<HTMLVideoElement>(null)
-  const localVideoRef     = useRef<HTMLVideoElement>(null)
-  const roomRef           = useRef<any>(null)
-  const pcRef             = useRef<RTCPeerConnection | null>(null)
-  const heygenSessionId   = useRef<string | null>(null)
-  const heygenReadyRef    = useRef(false)
-  const heygenFailedRef   = useRef(false)   // sync ref so speakHeyGen can check without stale closure
-  const speakingRef       = useRef(false)
-  const pendingMessages   = useRef<string[]>([])
-  const speakTimerRef     = useRef<NodeJS.Timeout | null>(null)
-
-  const speechRecRef        = useRef<any>(null)
   const [liveTranscript,    setLiveTranscript]    = useState('')
   const [candidateSpeaking, setCandidateSpeaking] = useState(false)
+
+  const localVideoRef     = useRef<HTMLVideoElement>(null)
+  const roomRef           = useRef<any>(null)
+  const convStateRef      = useRef<ConvState>('idle')
+  const recognitionRef    = useRef<any>(null)
+  const speakQueueRef     = useRef<string[]>([])
+  const isSpeakingRef     = useRef(false)
+  const liveTranscriptRef = useRef('')
 
   // ── Anti-cheat state ───────────────────────────────────────────────────────
   const [violations,       setViolations]      = useState<Violation[]>([])
@@ -103,27 +98,10 @@ export default function CandidateInterviewPage() {
   const activeStatusRef = useRef<Status>('init')
   useEffect(() => { activeStatusRef.current = status }, [status])
 
-  // ── Live transcription ─────────────────────────────────────────────────────
-  useEffect(() => {
-    if (status !== 'active') return
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-    if (!SR) return
-    const rec = new SR()
-    rec.continuous = true
-    rec.interimResults = true
-    rec.lang = 'en-US'
-    rec.onresult = (e: any) => {
-      let text = ''
-      for (let i = 0; i < e.results.length; i++) text += e.results[i][0].transcript
-      setLiveTranscript(text)
-      setCandidateSpeaking(!e.results[e.results.length - 1].isFinal)
-    }
-    rec.onerror = () => {}
-    rec.onend   = () => { try { rec.start() } catch(e){} }
-    try { rec.start() } catch(e) {}
-    speechRecRef.current = rec
-    return () => { try { rec.stop() } catch(e) {} }
-  }, [status])
+  // Keep liveTranscriptRef in sync for use inside recognition callbacks
+  useEffect(() => { liveTranscriptRef.current = liveTranscript }, [liveTranscript])
+  // Keep convStateRef in sync
+  useEffect(() => { convStateRef.current = convState }, [convState])
 
   // ── Log violation ──────────────────────────────────────────────────────────
   const logViolation = useCallback((type: ViolationType, details = '') => {
@@ -205,184 +183,160 @@ export default function CandidateInterviewPage() {
     document.documentElement.requestFullscreen?.().then(() => setIsFullscreen(true)).catch(() => {})
   }
 
-  // ── Signal bot that TTS has finished so it can start listening immediately ───
-  const sendTtsDone = useCallback(() => {
+  // ── Send message to bot via LiveKit data channel ─────────────────────────
+  const sendToBot = useCallback((type: string, text = '') => {
     try {
       const room = roomRef.current
       if (!room?.localParticipant) return
-      const payload = new TextEncoder().encode(JSON.stringify({ type: 'tts_done' }))
+      const payload = new TextEncoder().encode(JSON.stringify({ type, text }))
       room.localParticipant.publishData(payload, { reliable: true }).catch(() => {})
     } catch (_) {}
   }, [])
 
-  // ── Browser speech synthesis fallback (works with no API key) ───────────────
-  const speakFallback = useCallback((text: string): Promise<void> => {
-    return new Promise(resolve => {
-      if (typeof window === 'undefined' || !window.speechSynthesis) { sendTtsDone(); resolve(); return }
-      window.speechSynthesis.cancel()
+  // ── Start listening via browser SpeechRecognition ─────────────────────────
+  const startListening = useCallback(() => {
+    // Stop any existing recognition session
+    try { recognitionRef.current?.stop() } catch (_) {}
 
-      const doSpeak = () => {
-        const utt = new SpeechSynthesisUtterance(text)
-        utt.rate   = 1.05
-        utt.pitch  = 1.1
-        utt.volume = 1.0
-        // Prefer a female English voice
-        const voices = window.speechSynthesis.getVoices()
-        const voice  = voices.find(v => v.lang.startsWith('en') && /female|woman|zira|susan|karen|samantha|heera/i.test(v.name))
-                    || voices.find(v => v.lang.startsWith('en-IN'))
-                    || voices.find(v => v.lang.startsWith('en'))
-        if (voice) utt.voice = voice
-        utt.onend   = () => { sendTtsDone(); resolve() }
-        utt.onerror = () => { sendTtsDone(); resolve() }
-        window.speechSynthesis.speak(utt)
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    if (!SR) {
+      console.warn('[STT] SpeechRecognition not supported in this browser')
+      return
+    }
+
+    setConvState('listening')
+    convStateRef.current = 'listening'
+    setLiveTranscript('')
+    liveTranscriptRef.current = ''
+
+    const rec = new SR()
+    rec.continuous      = false   // single utterance per session
+    rec.interimResults  = true
+    rec.lang            = 'en-IN'
+    recognitionRef.current = rec
+
+    let finalTranscript = ''
+
+    rec.onstart = () => {
+      console.log('[STT] Listening started')
+      setCandidateSpeaking(false)
+    }
+
+    rec.onresult = (e: any) => {
+      let interim = ''
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) {
+          finalTranscript += e.results[i][0].transcript + ' '
+        } else {
+          interim += e.results[i][0].transcript
+        }
       }
+      const combined = (finalTranscript + interim).trim()
+      setLiveTranscript(combined)
+      liveTranscriptRef.current = combined
+      setCandidateSpeaking(!!interim)
+      // Reset silence timer while candidate is speaking
+      silenceCountRef.current = 0
+      setSilenceSeconds(0)
+    }
 
-      // Voices may not be loaded yet — wait for them if needed
-      const voices = window.speechSynthesis.getVoices()
-      if (voices.length > 0) {
-        doSpeak()
+    rec.onend = () => {
+      setCandidateSpeaking(false)
+      // Only send if we're still in listening state (not interrupted by bot)
+      if (convStateRef.current !== 'listening') return
+      const transcript = finalTranscript.trim() || liveTranscriptRef.current.trim()
+      if (transcript.length > 2) {
+        console.log('[STT] Sending transcript:', transcript)
+        setConvState('processing')
+        convStateRef.current = 'processing'
+        sendToBot('transcript', transcript)
+        setLiveTranscript('')
       } else {
-        window.speechSynthesis.onvoiceschanged = () => { doSpeak() }
-        // Hard fallback: speak after 1s even if voices never load
-        setTimeout(doSpeak, 1000)
+        // No speech detected — restart listening
+        console.log('[STT] No speech detected — restarting')
+        setTimeout(() => {
+          if (convStateRef.current === 'listening') startListening()
+        }, 500)
       }
-    })
-  }, [sendTtsDone])
+    }
 
-  // ── HeyGen speak via REST (with speech synthesis fallback) ────────────────
-  const speakHeyGen = useCallback(async (text: string) => {
-    // If HeyGen failed, speak immediately via browser TTS — no queuing needed
-    if (heygenFailedRef.current) {
-      if (speakingRef.current) { pendingMessages.current.push(text); return }
-      speakingRef.current = true
-      setBotSpeaking(true)
-      await speakFallback(text)
-      speakingRef.current = false
-      setBotSpeaking(false)
-      if (pendingMessages.current.length > 0) speakHeyGen(pendingMessages.current.shift()!)
+    rec.onerror = (e: any) => {
+      console.warn('[STT] Error:', e.error)
+      setCandidateSpeaking(false)
+      if (e.error === 'no-speech' && convStateRef.current === 'listening') {
+        // Restart on no-speech
+        setTimeout(() => {
+          if (convStateRef.current === 'listening') startListening()
+        }, 300)
+      }
+    }
+
+    try { rec.start() } catch (e) { console.warn('[STT] Start failed:', e) }
+  }, [sendToBot])
+
+  // ── Speak text via browser TTS, then start listening ─────────────────────
+  const speak = useCallback((text: string) => {
+    // Queue if already speaking
+    if (isSpeakingRef.current) {
+      speakQueueRef.current.push(text)
       return
     }
 
-    // Queue if HeyGen not ready yet or already speaking
-    if (!heygenReadyRef.current || speakingRef.current) {
-      pendingMessages.current.push(text)
-      return
-    }
-    const sessionId = heygenSessionId.current
-    if (!sessionId) { pendingMessages.current.push(text); return }
-
-    speakingRef.current = true
+    isSpeakingRef.current = true
+    setConvState('bot_speaking')
+    convStateRef.current = 'bot_speaking'
     setBotSpeaking(true)
 
-    try {
-      await fetch('/api/interviews/heygen-session', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'speak', sessionId, text }),
-      })
-      // HeyGen REST returns immediately; estimate speaking duration ~10 chars/sec + 2.5s buffer
-      const ms = Math.max(3500, (text.length / 10) * 1000 + 2500)
-      await new Promise<void>(resolve => { speakTimerRef.current = setTimeout(resolve, ms) })
-    } catch (err) {
-      console.warn('[HeyGen] Speak error — falling back to browser TTS:', err)
-      await speakFallback(text)
-    } finally {
-      speakingRef.current = false
-      setBotSpeaking(false)
-      if (pendingMessages.current.length > 0) speakHeyGen(pendingMessages.current.shift()!)
+    // Stop any active recognition while bot speaks
+    try { recognitionRef.current?.stop() } catch (_) {}
+
+    const doSpeak = () => {
+      if (!window.speechSynthesis) {
+        isSpeakingRef.current = false
+        setBotSpeaking(false)
+        startListening()
+        return
+      }
+      window.speechSynthesis.cancel()
+      const utt = new SpeechSynthesisUtterance(text)
+      utt.rate  = 1.0
+      utt.pitch = 1.05
+      utt.volume = 1.0
+      // Prefer Indian-English female voice
+      const voices = window.speechSynthesis.getVoices()
+      const voice = voices.find(v => v.lang.startsWith('en') && /female|woman|zira|susan|karen|samantha|heera/i.test(v.name))
+                 || voices.find(v => v.lang.startsWith('en-IN'))
+                 || voices.find(v => v.lang.startsWith('en'))
+      if (voice) utt.voice = voice
+
+      utt.onend = () => {
+        isSpeakingRef.current = false
+        setBotSpeaking(false)
+        silenceCountRef.current = 0
+        setSilenceSeconds(0)
+        // Process queue or start listening
+        if (speakQueueRef.current.length > 0) {
+          speak(speakQueueRef.current.shift()!)
+        } else {
+          startListening()
+        }
+      }
+      utt.onerror = () => {
+        isSpeakingRef.current = false
+        setBotSpeaking(false)
+        startListening()
+      }
+      window.speechSynthesis.speak(utt)
     }
-  }, [speakFallback])
 
-  // ── Init HeyGen via native WebRTC (no SDK) ────────────────────────────────
-  const initHeyGen = useCallback(async (): Promise<boolean> => {
-    try {
-      // 1. Create HeyGen streaming session
-      const res = await fetch('/api/interviews/heygen-session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ quality: 'low' }),  // avatarName set by env var on server
-      })
-      const data = await res.json()
-
-      if (!res.ok || !data.sessionId) {
-        console.warn('[HeyGen] Session creation failed:', data.error || data)
-        heygenFailedRef.current = true
-        setHeygenFailed(true)
-        // Drain pending queue via browser TTS
-        const q = [...pendingMessages.current]; pendingMessages.current = []
-        q.forEach(msg => speakHeyGen(msg))
-        return false
-      }
-
-      const { sessionId, sdp: offerSdp, iceServers = [], iceServers2 = [] } = data
-      heygenSessionId.current = sessionId
-
-      // 2. Create WebRTC peer connection with HeyGen's ICE servers
-      const pc = new RTCPeerConnection({
-        iceServers: [...iceServers, ...iceServers2],
-      })
-      pcRef.current = pc
-
-      // 3. When avatar video/audio arrives → attach to video element
-      pc.ontrack = (event) => {
-        console.log('[HeyGen] Track received:', event.track.kind)
-        if (event.track.kind === 'video' && heygenVideoRef.current && !heygenReadyRef.current) {
-          heygenVideoRef.current.srcObject = event.streams[0]
-          heygenVideoRef.current.play().catch(console.error)
-          heygenReadyRef.current = true
-          setHeygenReady(true)
-          console.log('[HeyGen] Avatar stream ready ✓')
-          // Drain any messages that arrived before avatar was ready
-          const queue = [...pendingMessages.current]
-          pendingMessages.current = []
-          queue.forEach(msg => speakHeyGen(msg))
-        }
-      }
-
-      // 4. Forward ICE candidates to HeyGen
-      pc.onicecandidate = ({ candidate }) => {
-        if (candidate && heygenSessionId.current) {
-          fetch('/api/interviews/heygen-session', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sessionId: heygenSessionId.current, candidate }),
-          }).catch(() => {})
-        }
-      }
-
-      pc.onconnectionstatechange = () => {
-        console.log('[HeyGen] WebRTC state:', pc.connectionState)
-        if (pc.connectionState === 'failed') {
-          heygenFailedRef.current = true
-          setHeygenFailed(true)
-          const q = [...pendingMessages.current]; pendingMessages.current = []
-          q.forEach(msg => speakHeyGen(msg))
-        }
-      }
-
-      // 5. Set HeyGen's offer, create answer, send it back
-      await pc.setRemoteDescription(new RTCSessionDescription(offerSdp))
-      const answer = await pc.createAnswer()
-      await pc.setLocalDescription(answer)
-
-      await fetch('/api/interviews/heygen-session', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'start', sessionId, sdp: answer }),
-      })
-
-      console.log('[HeyGen] WebRTC handshake complete, waiting for stream…')
-      return true
-    } catch (err) {
-      console.error('[HeyGen] Init error:', err)
-      heygenFailedRef.current = true
-      setHeygenFailed(true)
-      // Drain pending queue via browser TTS
-      const q = [...pendingMessages.current]; pendingMessages.current = []
-      q.forEach(msg => speakHeyGen(msg))
-      return false
+    const voices = window.speechSynthesis?.getVoices() || []
+    if (voices.length > 0) {
+      doSpeak()
+    } else {
+      if (window.speechSynthesis) window.speechSynthesis.onvoiceschanged = doSpeak
+      setTimeout(doSpeak, 800)
     }
-  }, [speakHeyGen])
+  }, [startListening])
 
   // ── Join LiveKit room ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -392,9 +346,6 @@ export default function CandidateInterviewPage() {
 
     const join = async () => {
       setStatus('joining')
-
-      // Init HeyGen avatar before joining LiveKit
-      await initHeyGen()
 
       try {
         const { Room, RoomEvent, Track, ConnectionState } = await import('livekit-client')
@@ -418,11 +369,10 @@ export default function CandidateInterviewPage() {
           } catch (e) {
             console.warn('[LiveKit] Media error:', e)
           }
-          // Bot already in room?
           if (room.remoteParticipants.size > 0) setStatus('active')
         })
 
-        room.on(RoomEvent.Disconnected, (reason: any) => {
+        room.on(RoomEvent.Disconnected, () => {
           if (activeStatusRef.current === 'active') setStatus('ended')
           else { setErrorMsg('Connection lost. Please generate a new interview link.'); setStatus('error') }
         })
@@ -432,26 +382,32 @@ export default function CandidateInterviewPage() {
           else if (state === ConnectionState.Connected) setNetworkQuality('good')
         })
 
-        // Bot joined → interview is active
+        // Bot joined → mark active + send ready signal so bot sends greeting
         room.on(RoomEvent.ParticipantConnected, (participant: any) => {
           console.log('[LiveKit] Bot joined:', participant.identity)
           setStatus('active')
+          // Signal bot we're ready to receive the greeting
+          setTimeout(() => {
+            try {
+              const payload = new TextEncoder().encode(JSON.stringify({ type: 'ready' }))
+              room.localParticipant.publishData(payload, { reliable: true }).catch(() => {})
+            } catch (_) {}
+          }, 500)
         })
 
-        // ── Bot sends text via data channel → HeyGen/browser TTS speaks it ──
-        // No topic filter — older livekit SDK versions may not send topic field
-        room.on(RoomEvent.DataReceived, (payload: Uint8Array, _p: any, _k: any, topic?: string) => {
+        // ── Receive messages from bot ─────────────────────────────────────
+        room.on(RoomEvent.DataReceived, (payload: Uint8Array) => {
           try {
-            const decoded = new TextDecoder().decode(payload)
-            const msg = JSON.parse(decoded)
-            const text = msg.text || msg.content || msg.message
-            if (text && typeof text === 'string') {
-              console.log('[Bot] Data received (topic=' + (topic||'none') + '):', text.slice(0, 60) + '…')
-              speakHeyGen(text)
+            const msg = JSON.parse(new TextDecoder().decode(payload))
+            console.log('[Bot→Frontend]', msg.type, msg.text?.slice(0, 60) || '')
+
+            if (msg.type === 'bot_speech' && msg.text) {
+              speak(msg.text)
+            } else if (msg.type === 'bot_thinking') {
+              setConvState('processing')
+              convStateRef.current = 'processing'
             }
-          } catch (e) {
-            // Not JSON — ignore
-          }
+          } catch (_) {}
         })
 
         room.on(RoomEvent.LocalTrackPublished, (pub: any) => {
@@ -472,16 +428,9 @@ export default function CandidateInterviewPage() {
     join()
 
     return () => {
+      try { recognitionRef.current?.stop() } catch (_) {}
+      window.speechSynthesis?.cancel()
       room?.disconnect().catch(() => {})
-      pcRef.current?.close()
-      if (speakTimerRef.current) clearTimeout(speakTimerRef.current)
-      if (heygenSessionId.current) {
-        fetch('/api/interviews/heygen-session', {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionId: heygenSessionId.current }),
-        }).catch(() => {})
-      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomName, lkUrl, token, consentGiven])
@@ -496,15 +445,9 @@ export default function CandidateInterviewPage() {
   }
 
   function leaveCall() {
+    try { recognitionRef.current?.stop() } catch (_) {}
+    window.speechSynthesis?.cancel()
     roomRef.current?.disconnect().catch(() => {})
-    pcRef.current?.close()
-    if (heygenSessionId.current) {
-      fetch('/api/interviews/heygen-session', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: heygenSessionId.current }),
-      }).catch(() => {})
-    }
     setStatus('ended')
   }
 
@@ -661,79 +604,67 @@ export default function CandidateInterviewPage() {
       {/* Video area */}
       <div className="flex-1 flex items-stretch p-4 gap-4 min-h-0 overflow-hidden">
 
-        {/* HeyGen Avatar Panel */}
-        <div
-          className="relative rounded-2xl overflow-hidden shadow-2xl flex-1 min-w-0"
-          style={{ background: 'linear-gradient(160deg, #e8d5f7 0%, #d5e8fb 50%, #dff0e8 100%)' }}
-        >
-          <video
-            ref={heygenVideoRef}
-            autoPlay
-            playsInline
-            className={`w-full h-full object-cover transition-opacity duration-500 ${heygenReady ? 'opacity-100' : 'opacity-0'}`}
-          />
+        {/* Meera Avatar Panel */}
+        <div className="relative rounded-2xl overflow-hidden shadow-2xl flex-1 min-w-0 bg-gradient-to-b from-gray-900 to-gray-950 flex flex-col items-center justify-center">
 
-          {/* Loading */}
-          {!heygenReady && !heygenFailed && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-b from-gray-900 to-gray-950">
-              <div className="relative mb-6">
-                <div className="w-24 h-24 rounded-full bg-purple-600/20 flex items-center justify-center">
-                  <div className="w-14 h-14 rounded-full bg-purple-600/40 flex items-center justify-center">
-                    <div className="w-7 h-7 rounded-full bg-purple-600 animate-pulse" />
-                  </div>
-                </div>
-                <div className="absolute inset-0 rounded-full border-2 border-purple-500 border-t-transparent animate-spin" />
+          {/* Animated avatar */}
+          <div className="relative mb-6">
+            {/* Outer pulse rings when speaking */}
+            {botSpeaking && <>
+              <div className="absolute inset-[-16px] rounded-full border-2 border-purple-500/30 animate-ping" style={{ animationDuration: '1s' }} />
+              <div className="absolute inset-[-8px] rounded-full border-2 border-purple-400/40 animate-ping" style={{ animationDuration: '1.4s' }} />
+            </>}
+            {/* Listening pulse ring */}
+            {convState === 'listening' && (
+              <div className="absolute inset-[-6px] rounded-full border-2 border-green-400/50 animate-pulse" />
+            )}
+            {/* Avatar circle */}
+            <div className={`w-32 h-32 rounded-full flex items-center justify-center text-6xl font-bold text-white shadow-2xl transition-all duration-300
+              ${botSpeaking ? 'bg-gradient-to-br from-purple-600 to-purple-800 ring-4 ring-purple-400/50 ring-offset-2 ring-offset-gray-950 scale-105' : ''}
+              ${convState === 'listening' ? 'bg-gradient-to-br from-green-700 to-green-900 ring-2 ring-green-400/40 ring-offset-2 ring-offset-gray-950' : ''}
+              ${convState === 'processing' ? 'bg-gradient-to-br from-blue-700 to-blue-900' : ''}
+              ${convState === 'idle' || status !== 'active' ? 'bg-gradient-to-br from-purple-800 to-gray-800' : ''}
+            `}>
+              M
+            </div>
+            {/* Sound wave bars when speaking */}
+            {botSpeaking && (
+              <div className="absolute -bottom-8 left-1/2 -translate-x-1/2 flex items-end gap-1">
+                {[3,5,8,5,3,6,4,7,4].map((h, i) => (
+                  <div key={i} className="w-1 bg-purple-400 rounded-full animate-pulse" style={{ height: `${h * 3}px`, animationDelay: `${i * 0.1}s` }} />
+                ))}
               </div>
-              <p className="text-white font-semibold text-lg">Meera is joining…</p>
-              <p className="text-gray-400 text-sm mt-1">Setting up avatar, please wait</p>
-            </div>
-          )}
-
-          {/* Fallback avatar when HeyGen unavailable */}
-          {!heygenReady && heygenFailed && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-b from-gray-900 to-gray-950">
-              <div className="relative mb-6">
-                <div className={`w-28 h-28 rounded-full bg-purple-700 flex items-center justify-center text-5xl font-bold text-white shadow-lg ${botSpeaking ? 'ring-4 ring-purple-400 ring-offset-2 ring-offset-gray-900' : ''}`}>
-                  M
-                </div>
-                {botSpeaking && <div className="absolute inset-0 rounded-full border-2 border-purple-400/60 animate-ping" style={{ animationDuration: '1s' }} />}
-              </div>
-              <p className="text-white font-semibold text-lg">Meera · AI Interviewer</p>
-              <p className="text-gray-500 text-xs mt-1">
-                {status !== 'active'
-                  ? '⏳ Waiting to join…'
-                  : botSpeaking ? '🔊 Speaking…' : '👂 Listening…'}
-              </p>
-            </div>
-          )}
-
-          {/* Speaking rings */}
-          {heygenReady && botSpeaking && (
-            <>
-              <div className="absolute inset-0 rounded-2xl border-2 border-purple-500/60 animate-ping pointer-events-none" style={{ animationDuration: '1s' }} />
-              <div className="absolute inset-[-4px] rounded-2xl border border-purple-400/30 animate-ping pointer-events-none" style={{ animationDuration: '1.5s' }} />
-            </>
-          )}
-
-          {/* Listening pill */}
-          {heygenReady && !botSpeaking && status === 'active' && (
-            <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-black/60 backdrop-blur-sm px-3 py-1 rounded-full text-xs text-green-300 flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-              Listening…
-            </div>
-          )}
-
-          {/* Name label */}
-          <div className="absolute bottom-4 left-4 bg-black/70 backdrop-blur-sm px-3 py-1.5 rounded-xl text-sm font-semibold flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${botSpeaking ? 'bg-purple-400 animate-pulse' : 'bg-green-500'}`} />
-            Meera · AI Interviewer
-            {botSpeaking && <span className="text-xs text-purple-300 font-normal">Speaking</span>}
-            {!botSpeaking && status === 'active' && <span className="text-xs text-green-300 font-normal">Listening</span>}
+            )}
           </div>
 
-          <div className="absolute top-3 right-3 bg-black/60 backdrop-blur-sm px-2 py-1 rounded-lg text-xs text-gray-400 flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-green-400" />
-            Powered by HeyGen
+          <p className="text-white font-semibold text-xl mt-4">Meera</p>
+          <p className="text-gray-400 text-sm mt-1">AI Interviewer · Howell HR</p>
+
+          {/* State pill */}
+          <div className={`mt-4 px-4 py-1.5 rounded-full text-xs font-medium flex items-center gap-2 transition-all
+            ${status !== 'active' ? 'bg-yellow-500/20 text-yellow-300' : ''}
+            ${convState === 'bot_speaking' ? 'bg-purple-500/20 text-purple-300' : ''}
+            ${convState === 'listening' ? 'bg-green-500/20 text-green-300' : ''}
+            ${convState === 'processing' ? 'bg-blue-500/20 text-blue-300' : ''}
+            ${convState === 'idle' && status === 'active' ? 'bg-gray-700 text-gray-400' : ''}
+          `}>
+            <span className={`w-1.5 h-1.5 rounded-full
+              ${status !== 'active' ? 'bg-yellow-400 animate-pulse' : ''}
+              ${convState === 'bot_speaking' ? 'bg-purple-400 animate-pulse' : ''}
+              ${convState === 'listening' ? 'bg-green-400 animate-pulse' : ''}
+              ${convState === 'processing' ? 'bg-blue-400 animate-pulse' : ''}
+              ${convState === 'idle' && status === 'active' ? 'bg-gray-500' : ''}
+            `} />
+            {status !== 'active' && '⏳ Joining…'}
+            {status === 'active' && convState === 'bot_speaking' && '🔊 Speaking…'}
+            {status === 'active' && convState === 'listening' && '👂 Listening…'}
+            {status === 'active' && convState === 'processing' && '🤔 Thinking…'}
+            {status === 'active' && convState === 'idle' && 'Ready'}
+          </div>
+
+          {/* Simli avatar coming soon badge */}
+          <div className="absolute top-3 right-3 bg-black/60 backdrop-blur-sm px-2 py-1 rounded-lg text-xs text-gray-400">
+            Avatar upgrade coming soon
           </div>
         </div>
 
