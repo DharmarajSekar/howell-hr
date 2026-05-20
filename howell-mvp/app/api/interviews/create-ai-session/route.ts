@@ -107,11 +107,12 @@ export async function POST(request: NextRequest) {
       HRMS_CALLBACK_SECRET:  process.env.INTERVIEW_CALLBACK_SECRET!,
       // AI service keys — forwarded from Next.js env to bot
       GEMINI_API_KEY:        process.env.GEMINI_API_KEY!,
-      ELEVENLABS_API_KEY:    process.env.ELEVENLABS_API_KEY || 'not-used',  // kept for server.py validation compat
-      ELEVENLABS_VOICE_ID:   process.env.ELEVENLABS_VOICE_ID || 'not-used',
-      SIMLI_API_KEY:         process.env.SIMLI_API_KEY!,
-      SIMLI_FACE_ID:         process.env.SIMLI_FACE_ID || 'b9e5fba3-071a-4e35-896e-211c4d6eaa7b',
       DEEPGRAM_API_KEY:      process.env.DEEPGRAM_API_KEY!,
+      // Legacy fields — kept with empty defaults so server.py Pydantic model doesn't error
+      ELEVENLABS_API_KEY:    process.env.ELEVENLABS_API_KEY || '',
+      ELEVENLABS_VOICE_ID:   process.env.ELEVENLABS_VOICE_ID || '',
+      SIMLI_API_KEY:         '',   // No longer used — switched to HeyGen
+      SIMLI_FACE_ID:         '',   // No longer used
     }
 
     const botRes = await fetch(`${BOT_SERVER_URL}/start`, {

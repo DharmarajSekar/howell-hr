@@ -679,7 +679,7 @@ export default function CandidateInterviewPage() {
             </div>
           )}
 
-          {/* Fallback */}
+          {/* Fallback avatar when HeyGen unavailable */}
           {!heygenReady && heygenFailed && (
             <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-b from-gray-900 to-gray-950">
               <div className="relative mb-6">
@@ -689,7 +689,11 @@ export default function CandidateInterviewPage() {
                 {botSpeaking && <div className="absolute inset-0 rounded-full border-2 border-purple-400/60 animate-ping" style={{ animationDuration: '1s' }} />}
               </div>
               <p className="text-white font-semibold text-lg">Meera · AI Interviewer</p>
-              <p className="text-gray-500 text-xs mt-1">{botSpeaking ? '🔊 Speaking…' : '👂 Listening…'}</p>
+              <p className="text-gray-500 text-xs mt-1">
+                {status !== 'active'
+                  ? '⏳ Waiting to join…'
+                  : botSpeaking ? '🔊 Speaking…' : '👂 Listening…'}
+              </p>
             </div>
           )}
 
