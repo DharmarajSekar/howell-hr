@@ -1,11 +1,11 @@
 'use client'
 
 /**
- * Candidate Interview Page — LiveKit + Simli Humanoid Avatar
- * ===========================================================
- * Audio pipeline:
- *   Railway bot → ElevenLabs TTS → LiveKit WebRTC → candidate browser
- *   → AudioContext PCM capture → Simli.sendAudioData() → humanoid avatar video
+ * Candidate Interview Page — LiveKit + HeyGen Streaming Avatar
+ * =============================================================
+ * Architecture:
+ *   Railway bot (STT → Gemini) → LiveKit data channel (text)
+ *   → HeyGen avatar.speak() → perfect lip-synced video in browser
  *
  * URL params:
  *   ?room=<livekit-room-name>
@@ -67,20 +67,19 @@ export default function CandidateInterviewPage() {
   const [errorMsg,       setErrorMsg]       = useState('')
   const [micMuted,       setMicMuted]       = useState(false)
   const [networkQuality, setNetworkQuality] = useState<'good' | 'poor' | 'unknown'>('unknown')
-  const [simliReady,      setSimliReady]     = useState(false)
-  const [simliFailed,     setSimliFailed]    = useState(false)
-  const [botSpeaking,     setBotSpeaking]    = useState(false)
+  const [heygenReady,    setHeygenReady]    = useState(false)
+  const [heygenFailed,   setHeygenFailed]   = useState(false)
+  const [botSpeaking,    setBotSpeaking]    = useState(false)
 
-  const simliVideoRef  = useRef<HTMLVideoElement>(null)
-  const simliAudioRef  = useRef<HTMLAudioElement>(null)
+  const heygenVideoRef = useRef<HTMLVideoElement>(null)
   const localVideoRef  = useRef<HTMLVideoElement>(null)
-  const botAudioRef    = useRef<HTMLAudioElement>(null)   // direct bot audio fallback
   const roomRef        = useRef<any>(null)
-  const simliClientRef = useRef<any>(null)
-  const audioCtxRef      = useRef<any>(null)
-  const analyserRef      = useRef<any>(null)
-  const botLevelTimerRef = useRef<any>(null)
-  const speechRecRef     = useRef<any>(null)
+  const heygenRef      = useRef<any>(null)      // StreamingAvatar instance
+  const pendingMessages = useRef<string[]>([])  // messages queued before HeyGen is ready
+  const heygenReadyRef  = useRef(false)
+  const speakingRef     = useRef(false)         // prevents concurrent speak calls
+
+  const speechRecRef       = useRef<any>(null)
   const [liveTranscript,    setLiveTranscript]    = useState('')
   const [candidateSpeaking, setCandidateSpeaking] = useState(false)
 
@@ -196,7 +195,6 @@ export default function CandidateInterviewPage() {
     if (!micMuted && status === 'active') { silenceCountRef.current = 0; setSilenceSeconds(0) }
   }, [micMuted, status])
 
-  // Reset silence counter whenever candidate is actively speaking
   useEffect(() => {
     if (candidateSpeaking && status === 'active') { silenceCountRef.current = 0; setSilenceSeconds(0) }
   }, [candidateSpeaking, status])
@@ -205,90 +203,109 @@ export default function CandidateInterviewPage() {
     document.documentElement.requestFullscreen?.().then(() => setIsFullscreen(true)).catch(() => {})
   }
 
-  // ── Initialise Simli (v3 API) ──────────────────────────────────────────────
-  const initSimli = useCallback(async () => {
-    // 20-second hard timeout — if Simli hasn't connected by then, show fallback
-    const failTimer = setTimeout(() => {
-      if (!simliClientRef.current) {
-        console.warn('[Simli] Connection timeout after 20s — showing fallback avatar')
-        setSimliFailed(true)
+  // ── HeyGen avatar speak ────────────────────────────────────────────────────
+  const speakHeyGen = useCallback(async (text: string) => {
+    if (!heygenRef.current || speakingRef.current) {
+      // Queue if avatar not ready or already speaking
+      if (!heygenReadyRef.current) {
+        pendingMessages.current.push(text)
       }
-    }, 20000)
-
+      return
+    }
+    speakingRef.current = true
+    setBotSpeaking(true)
     try {
-      // Fetch API key + face ID from our server proxy (keeps key off the client)
-      const cfgRes = await fetch('/api/interviews/simli-session')
-      if (!cfgRes.ok) {
-        console.warn('[Simli] Not configured (status', cfgRes.status, ') — showing fallback avatar')
-        clearTimeout(failTimer)
-        setSimliFailed(true)
-        return false
-      }
-      const { apiKey, faceId } = await cfgRes.json()
-      console.log('[Simli] Config received, faceId:', faceId)
-
-      // Dynamic import — keeps bundle small and avoids SSR issues
-      const { SimliClient, generateSimliSessionToken, LogLevel } = await import('simli-client')
-
-      // v3: generateSimliSessionToken expects { apiKey, config: { faceId, handleSilence, ... } }
-      const tokenData = await generateSimliSessionToken({
-        apiKey,
-        config: {
-          faceId:           faceId,
-          handleSilence:    true,
-          maxSessionLength: 3600,
-          maxIdleTime:      300,
-        },
+      const { TaskType, TaskMode } = await import('@heygen/streaming-avatar')
+      await heygenRef.current.speak({
+        text,
+        taskType: TaskType.REPEAT,
+        taskMode: TaskMode.SYNC,   // awaits until avatar finishes speaking
       })
-
-      const sessionToken = tokenData?.session_token || tokenData?.sessionToken
-      if (!sessionToken) throw new Error('No session token returned from Simli')
-      console.log('[Simli] Session token obtained, starting client…')
-
-      // transport='livekit' = Simli's OWN LiveKit server (wss://api.simli.ai) for avatar video.
-      // Nothing to do with the candidate's LiveKit room. Default is 'p2p' which requires ice
-      // servers — always pass 'livekit' explicitly to avoid "Ice Servers Required" throw.
-      const client = new SimliClient(
-        sessionToken,
-        simliVideoRef.current,
-        simliAudioRef.current,
-        null,           // iceServers — not needed for livekit transport
-        LogLevel.WARN,
-        'livekit',
-      )
-
-      await client.start()
-      clearTimeout(failTimer)
-      simliClientRef.current = client
-      setSimliReady(true)
-      console.log('[Simli] Avatar ready ✓ faceId:', faceId)
-      return true
     } catch (err) {
-      clearTimeout(failTimer)
-      console.warn('[Simli] Init error — showing fallback avatar:', err)
-      setSimliFailed(true)
-      return false
+      console.warn('[HeyGen] Speak error:', err)
+    } finally {
+      speakingRef.current = false
+      setBotSpeaking(false)
+      // Drain the queue — speak any messages that arrived while we were busy
+      if (pendingMessages.current.length > 0) {
+        const next = pendingMessages.current.shift()!
+        speakHeyGen(next)
+      }
     }
   }, [])
 
-  // ── Pipe bot audio → Simli for lip sync ─────────────────────────────────────
-  // listenToMediastreamTrack is the correct Simli v3 API:
-  //   - Internally creates a 16kHz AudioContext + AudioWorklet
-  //   - Resamples the WebRTC track (48kHz) to 16kHz automatically
-  //   - Sends PCM chunks to Simli for phoneme-driven lip animation
-  //   - Simli also re-outputs the audio through simliAudioRef (no separate playback needed)
-  const pipeBotAudioToSimli = useCallback((mediaStreamTrack: MediaStreamTrack) => {
-    if (!simliClientRef.current) return
+  // ── Initialise HeyGen streaming avatar ────────────────────────────────────
+  const initHeyGen = useCallback(async (): Promise<boolean> => {
     try {
-      simliClientRef.current.listenToMediastreamTrack(mediaStreamTrack)
-      console.log('[Simli] listenToMediastreamTrack connected — lip sync active')
+      const cfgRes = await fetch('/api/interviews/heygen-token', { method: 'POST' })
+      if (!cfgRes.ok) {
+        console.warn('[HeyGen] Token endpoint returned', cfgRes.status, '— showing fallback')
+        setHeygenFailed(true)
+        return false
+      }
+      const { token: hgToken, avatarId, voiceId } = await cfgRes.json()
+      if (!hgToken) {
+        console.warn('[HeyGen] No token returned — showing fallback')
+        setHeygenFailed(true)
+        return false
+      }
 
-      // Level monitor so the Speaking/Listening indicator works
-      setupBotAudioMonitor(mediaStreamTrack)
+      const {
+        default: StreamingAvatar,
+        StreamingEvents,
+        AvatarQuality,
+        VoiceEmotion,
+      } = await import('@heygen/streaming-avatar')
+
+      const avatar = new StreamingAvatar({ token: hgToken })
+      heygenRef.current = avatar
+
+      // Stream ready → attach MediaStream to video element
+      avatar.on(StreamingEvents.STREAM_READY, (event: any) => {
+        const stream = event.detail as MediaStream
+        if (heygenVideoRef.current) {
+          heygenVideoRef.current.srcObject = stream
+          heygenVideoRef.current.play().catch(console.error)
+        }
+        console.log('[HeyGen] Stream ready ✓')
+        heygenReadyRef.current = true
+        setHeygenReady(true)
+        // Drain any messages that arrived before avatar was ready
+        while (pendingMessages.current.length > 0) {
+          const msg = pendingMessages.current.shift()!
+          speakHeyGen(msg)
+        }
+      })
+
+      avatar.on(StreamingEvents.STREAM_DISCONNECTED, () => {
+        console.warn('[HeyGen] Stream disconnected')
+        setBotSpeaking(false)
+        speakingRef.current = false
+      })
+
+      // Start the streaming avatar session
+      await avatar.createStartAvatar({
+        quality:   AvatarQuality.Low,   // Low quality = fewer credits consumed on trial
+        avatarName: avatarId,
+        language:  'en',
+        ...(voiceId ? {
+          voice: {
+            voiceId,
+            rate:    1.05,
+            emotion: VoiceEmotion.FRIENDLY,
+          }
+        } : {}),
+        disableIdleTimeout: true,
+      })
+
+      console.log('[HeyGen] Avatar session started, avatarId:', avatarId)
+      return true
     } catch (err) {
-      console.warn('[Simli] Audio pipeline error:', err)
+      console.error('[HeyGen] Init failed:', err)
+      setHeygenFailed(true)
+      return false
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [speakHeyGen])
 
   // ── Join LiveKit room ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -299,8 +316,8 @@ export default function CandidateInterviewPage() {
     const join = async () => {
       setStatus('joining')
 
-      // Init Simli before joining so avatar is ready when bot speaks
-      await initSimli()
+      // Init HeyGen avatar first — must be ready before bot sends the greeting
+      await initHeyGen()
 
       try {
         const { Room, RoomEvent, Track, ConnectionState } = await import('livekit-client')
@@ -324,6 +341,8 @@ export default function CandidateInterviewPage() {
           } catch (mediaErr) {
             console.warn('[LiveKit] Media error:', mediaErr)
           }
+          // Check if bot already in room
+          if (room.remoteParticipants.size > 0) setStatus('active')
         })
 
         room.on(RoomEvent.Disconnected, (reason: any) => {
@@ -337,20 +356,32 @@ export default function CandidateInterviewPage() {
           else if (state === ConnectionState.Connected) setNetworkQuality('good')
         })
 
+        // ── Bot joined → interview is active ──────────────────────────────────
         room.on(RoomEvent.ParticipantConnected, (participant: any) => {
           console.log('[LiveKit] Participant joined:', participant.identity)
-          participant.trackPublications?.forEach((pub: any) => {
-            if (pub.isSubscribed && pub.track) handleRemoteTrack(pub.track)
-          })
+          setStatus('active')
+        })
+
+        // ── Bot text via data channel → HeyGen speaks ─────────────────────────
+        room.on(RoomEvent.DataReceived, (payload: Uint8Array, _participant: any, _kind: any, topic?: string) => {
+          if (topic !== 'bot_speech') return
+          try {
+            const { text } = JSON.parse(new TextDecoder().decode(payload))
+            if (text) {
+              console.log('[LiveKit] Bot speech received:', text.slice(0, 60), '…')
+              speakHeyGen(text)
+            }
+          } catch (e) {
+            console.warn('[LiveKit] Failed to parse data message')
+          }
         })
 
         room.on(RoomEvent.TrackSubscribed, (track: any, _pub: any, participant: any) => {
           console.log('[LiveKit] Track subscribed:', track.kind, 'from', participant.identity)
-          handleRemoteTrack(track)
-        })
-
-        room.on(RoomEvent.TrackUnsubscribed, (track: any) => {
-          if (typeof track.detach === 'function') track.detach()
+          // Attach candidate local video (camera track from server-side participant, if any)
+          if ((track.kind === 'video' || track.kind === 'camera') && localVideoRef.current) {
+            try { track.attach(localVideoRef.current) } catch (e) {}
+          }
         })
 
         room.on(RoomEvent.LocalTrackPublished, (pub: any) => {
@@ -368,83 +399,11 @@ export default function CandidateInterviewPage() {
       }
     }
 
-    function setupBotAudioMonitor(track: MediaStreamTrack) {
-      try {
-        if (audioCtxRef.current) { audioCtxRef.current.close() }
-        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
-        const source = ctx.createMediaStreamSource(new MediaStream([track]))
-        const analyser = ctx.createAnalyser()
-        analyser.fftSize = 512
-        analyser.smoothingTimeConstant = 0.3
-        source.connect(analyser)
-        audioCtxRef.current = ctx
-        analyserRef.current = analyser
-        const data = new Uint8Array(analyser.frequencyBinCount)
-        if (botLevelTimerRef.current) clearInterval(botLevelTimerRef.current)
-        botLevelTimerRef.current = setInterval(() => {
-          analyser.getByteFrequencyData(data)
-          const avg = data.reduce((a, b) => a + b, 0) / data.length
-          const nowSpeaking = avg > 8
-          setBotSpeaking(prev => {
-            if (prev && !nowSpeaking) {
-              // Bot just finished speaking → clear Simli buffer so avatar returns to idle
-              simliClientRef.current?.ClearBuffer?.()
-            }
-            return nowSpeaking
-          })
-        }, 120)
-      } catch (e) { console.warn('[Audio] Level monitor error:', e) }
-    }
-
-    function handleRemoteTrack(track: any) {
-      const kind = track.kind ?? track.source
-      console.log('[LiveKit] Handling remote track:', kind)
-
-      if (kind === 'audio' || kind === 'microphone') {
-        // Mark interview as active — bot has joined and its audio track is live
-        setStatus('active')
-
-        if (track.mediaStreamTrack && simliClientRef.current) {
-          // ── Simli ready: PCM pipeline handles lip sync + playback + level monitor ──
-          pipeBotAudioToSimli(track.mediaStreamTrack)
-          console.log('[Audio] Routed bot audio to Simli via 16kHz PCM sendAudioData')
-        } else {
-          // ── Fallback: Simli not ready — play audio directly via botAudioRef ──
-          try {
-            if (typeof track.attach === 'function') {
-              if (botAudioRef.current) {
-                track.attach(botAudioRef.current)
-              } else {
-                const el = document.createElement('audio')
-                el.autoplay = true
-                el.style.display = 'none'
-                document.body.appendChild(el)
-                track.attach(el)
-              }
-            } else if (track.mediaStreamTrack) {
-              const el = botAudioRef.current || document.createElement('audio')
-              el.autoplay = true
-              el.srcObject = new MediaStream([track.mediaStreamTrack])
-              el.play().catch(() => {})
-              if (!botAudioRef.current) document.body.appendChild(el)
-            }
-            console.log('[Audio] Bot audio attached directly (Simli not ready)')
-          } catch (err) {
-            console.warn('[Audio] Failed to attach bot audio:', err)
-          }
-          if (track.mediaStreamTrack) setupBotAudioMonitor(track.mediaStreamTrack)
-        }
-        // Note: botSpeaking starts false — the level monitor will set it true once audio flows
-      } else if (kind === 'video' || kind === 'camera') {
-        setStatus('active')
-      }
-    }
-
     join()
 
     return () => {
       room?.disconnect().catch(() => {})
-      simliClientRef.current?.stop?.()
+      heygenRef.current?.stopAvatar?.().catch(() => {})
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomName, lkUrl, token, consentGiven])
@@ -460,6 +419,7 @@ export default function CandidateInterviewPage() {
 
   function leaveCall() {
     roomRef.current?.disconnect().catch(() => {})
+    heygenRef.current?.stopAvatar?.().catch(() => {})
     setStatus('ended')
   }
 
@@ -555,7 +515,7 @@ export default function CandidateInterviewPage() {
   )
 
   // ══════════════════════════════════════════════════════════════════════════
-  // Main Interview UI — Simli humanoid avatar
+  // Main Interview UI — HeyGen streaming avatar
   // ══════════════════════════════════════════════════════════════════════════
   return (
     <div className="min-h-screen bg-gray-950 text-white flex flex-col select-none">
@@ -620,24 +580,21 @@ export default function CandidateInterviewPage() {
       {/* Video area — 50/50 split */}
       <div className="flex-1 flex items-stretch p-4 gap-4 min-h-0 overflow-hidden">
 
-        {/* ── Simli Humanoid Avatar Panel ────────────────────────────────── */}
+        {/* ── HeyGen Avatar Panel ─────────────────────────────────────────── */}
         <div
           className="relative rounded-2xl overflow-hidden shadow-2xl flex-1 min-w-0"
           style={{ background: 'linear-gradient(160deg, #e8d5f7 0%, #d5e8fb 50%, #dff0e8 100%)' }}
         >
-          {/* Simli video output */}
+          {/* HeyGen video output */}
           <video
-            ref={simliVideoRef}
+            ref={heygenVideoRef}
             autoPlay
             playsInline
-            className={`w-full h-full object-cover transition-opacity duration-500 ${simliReady ? 'opacity-100' : 'opacity-0'}`}
+            className={`w-full h-full object-cover transition-opacity duration-500 ${heygenReady ? 'opacity-100' : 'opacity-0'}`}
           />
-          {/* Hidden audio elements */}
-          <audio ref={simliAudioRef} autoPlay style={{ display: 'none' }} />
-          <audio ref={botAudioRef} autoPlay style={{ display: 'none' }} />
 
           {/* Loading state */}
-          {!simliReady && !simliFailed && (
+          {!heygenReady && !heygenFailed && (
             <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-b from-gray-900 to-gray-950">
               <div className="relative mb-6">
                 <div className="w-24 h-24 rounded-full bg-purple-600/20 flex items-center justify-center">
@@ -652,8 +609,8 @@ export default function CandidateInterviewPage() {
             </div>
           )}
 
-          {/* Fallback avatar — shown when Simli is unavailable */}
-          {!simliReady && simliFailed && (
+          {/* Fallback avatar — shown when HeyGen is unavailable */}
+          {!heygenReady && heygenFailed && (
             <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-b from-gray-900 to-gray-950">
               <div className="relative mb-6">
                 <div className={`w-28 h-28 rounded-full bg-purple-700 flex items-center justify-center text-5xl font-bold text-white shadow-lg ${botSpeaking ? 'ring-4 ring-purple-400 ring-offset-2 ring-offset-gray-900' : ''}`}>
@@ -668,16 +625,16 @@ export default function CandidateInterviewPage() {
             </div>
           )}
 
-          {/* Speaking rings — only when bot is actively speaking */}
-          {simliReady && botSpeaking && (
+          {/* Speaking rings */}
+          {heygenReady && botSpeaking && (
             <>
               <div className="absolute inset-0 rounded-2xl border-2 border-purple-500/60 animate-ping pointer-events-none" style={{ animationDuration: '1s' }} />
               <div className="absolute inset-[-4px] rounded-2xl border border-purple-400/30 animate-ping pointer-events-none" style={{ animationDuration: '1.5s' }} />
             </>
           )}
 
-          {/* Listening mode overlay — shown when Alex is listening */}
-          {simliReady && !botSpeaking && status === 'active' && (
+          {/* Listening indicator */}
+          {heygenReady && !botSpeaking && status === 'active' && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-black/60 backdrop-blur-sm px-3 py-1 rounded-full text-xs text-green-300 flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
               Listening…
@@ -695,7 +652,7 @@ export default function CandidateInterviewPage() {
           {/* Powered by badge */}
           <div className="absolute top-3 right-3 bg-black/60 backdrop-blur-sm px-2 py-1 rounded-lg text-xs text-gray-400 flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-green-400" />
-            Powered by Simli
+            Powered by HeyGen
           </div>
         </div>
 
@@ -703,7 +660,6 @@ export default function CandidateInterviewPage() {
         <div className="relative bg-gray-900 rounded-2xl overflow-hidden shadow-xl flex-1 min-w-0">
           <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-full object-cover scale-x-[-1]" />
 
-          {/* Candidate speaking indicator */}
           {candidateSpeaking && (
             <div className="absolute inset-0 rounded-2xl border-2 border-green-500/50 animate-pulse pointer-events-none" />
           )}

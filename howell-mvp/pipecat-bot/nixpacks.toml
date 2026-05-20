@@ -3,7 +3,7 @@
 # Railway Root Directory must be set to: howell-mvp/pipecat-bot
 
 [phases.setup]
-nixPkgs = ["python311", "ffmpeg"]
+nixPkgs = ["python311"]
 
 [phases.install]
 cmds = ["pip install --upgrade pip", "pip install -r requirements.txt"]

@@ -1,4 +1,6 @@
-# Direct LiveKit + AI services implementation (no pipecat)
+# Howell HR Bot — HeyGen Avatar Edition
+# TTS is now handled by HeyGen on the frontend — no gTTS or ffmpeg needed.
+
 # LiveKit Python SDK — WebRTC room + audio streaming
 livekit==0.19.1
 
@@ -10,11 +12,8 @@ pydantic==2.7.0
 # Async HTTP — Deepgram STT, Gemini LLM
 aiohttp==3.9.5
 
-# Audio processing — reliable frame.data conversion
+# Audio processing — PCM frame conversion (48kHz → 16kHz downsample)
 numpy==1.26.4
 
 # Environment loading
 python-dotenv==1.0.1
-
-# Indian English TTS — Google Text-to-Speech (tld='co.in')
-gtts==2.5.1
